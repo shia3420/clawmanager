@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +25,7 @@ type userStore interface {
 var (
 	ErrRelayNotFound    = errors.New("newapi relay not found")
 	ErrRelayInvalid     = errors.New("newapi relay registration is invalid")
-	ErrUpstreamRejected = errors.New("newapi relay rejected the access token")
+	ErrUpstreamRejected = errors.New("newapi relay rejected the credential")
 	ErrQuotaExhausted   = errors.New("newapi relay daily quota exhausted")
 	ErrModuleNotReady   = errors.New("newapi module encryption key is not configured")
 )
@@ -38,8 +37,9 @@ type Config struct {
 	JWTExpiry     time.Duration
 }
 
-// ExchangeResult is returned to the SSO handler. The minted relay token is
-// intentionally NOT included: it is stored encrypted and resolved server-side.
+// ExchangeResult is returned to the SSO handler. The relay credential is
+// intentionally NOT included: it is the shared relay API key, stored encrypted
+// and resolved server-side.
 type ExchangeResult struct {
 	UserID       int
 	RelayName    string
@@ -60,10 +60,10 @@ type RelayKeyView struct {
 
 // Service implements the module's business logic.
 type Service interface {
-	CreateRelayKey(ctx context.Context, name, baseURL, relayToken string, dailyLimit int64, createdBy int) error
+	CreateRelayKey(ctx context.Context, name, baseURL, relayKey string, dailyLimit int64, createdBy int) error
 	ListRelayKeys() ([]RelayKeyView, error)
 	DeleteRelayKey(id int) error
-	ExchangeSSO(ctx context.Context, relayName, accessToken, email string) (*ExchangeResult, error)
+	ExchangeSSO(ctx context.Context, relayName, externalID string) (*ExchangeResult, error)
 	ResolveCredential(ctx context.Context, userID int) (*integration.CredentialOverride, error)
 }
 
@@ -105,11 +105,11 @@ func randomToken(nBytes int) string {
 	return hex.EncodeToString(buf)
 }
 
-func (s *service) CreateRelayKey(ctx context.Context, name, baseURL, relayToken string, dailyLimit int64, createdBy int) error {
+func (s *service) CreateRelayKey(ctx context.Context, name, baseURL, relayKey string, dailyLimit int64, createdBy int) error {
 	name = strings.TrimSpace(name)
 	baseURL = strings.TrimSpace(baseURL)
-	relayToken = strings.TrimSpace(relayToken)
-	if name == "" || baseURL == "" || relayToken == "" {
+	relayKey = strings.TrimSpace(relayKey)
+	if name == "" || baseURL == "" || relayKey == "" {
 		return ErrRelayInvalid
 	}
 	if existing, err := s.repo.GetRelayKeyByName(name); err != nil {
@@ -117,10 +117,10 @@ func (s *service) CreateRelayKey(ctx context.Context, name, baseURL, relayToken 
 	} else if existing != nil {
 		return fmt.Errorf("newapi relay name already exists")
 	}
-	if _, err := s.relay.FetchTokenSelf(ctx, baseURL, relayToken); err != nil {
+	if err := s.relay.ValidateCredential(ctx, baseURL, relayKey); err != nil {
 		return fmt.Errorf("%w: %v", ErrUpstreamRejected, err)
 	}
-	encrypted, err := s.cipher.Encrypt(relayToken)
+	encrypted, err := s.cipher.Encrypt(relayKey)
 	if err != nil {
 		return err
 	}
@@ -157,15 +157,20 @@ func (s *service) DeleteRelayKey(id int) error {
 	return s.repo.DeleteRelayKey(id)
 }
 
-// ExchangeSSO validates a user's New API access token against a registered
-// relay, lazily provisions a clawmanager account, mints a quota-bounded relay
-// token for that user, and stores it encrypted. The user's original access
-// token is never persisted (burn-after-use).
-func (s *service) ExchangeSSO(ctx context.Context, relayName, accessToken, email string) (*ExchangeResult, error) {
+// ExchangeSSO lazily provisions a clawmanager account for an external user
+// (identified by a stable external handle such as an email) and links it to the
+// requested relay. The link makes the gateway route the user's chat traffic
+// through the relay account's shared API key, bounded by the module's per-user
+// daily request breaker. The user's own New API credential is never required,
+// stored, or minted.
+func (s *service) ExchangeSSO(ctx context.Context, relayName, externalID string) (*ExchangeResult, error) {
 	relayName = strings.TrimSpace(relayName)
-	accessToken = strings.TrimSpace(accessToken)
-	if relayName == "" || accessToken == "" {
+	externalID = strings.TrimSpace(externalID)
+	if relayName == "" {
 		return nil, ErrRelayInvalid
+	}
+	if externalID == "" {
+		return nil, fmt.Errorf("%w: external id (email) is required", ErrRelayInvalid)
 	}
 
 	relayKey, err := s.repo.GetRelayKeyByName(relayName)
@@ -176,56 +181,48 @@ func (s *service) ExchangeSSO(ctx context.Context, relayName, accessToken, email
 		return nil, ErrRelayNotFound
 	}
 
-	relayToken, err := s.cipher.Decrypt(relayKey.RelayTokenEnc)
+	// Idempotent re-login: reuse an existing link for this external handle.
+	existing, err := s.repo.GetIdentityLinkByExternal(relayKey.ID, externalID)
 	if err != nil {
 		return nil, err
 	}
-
-	self, err := s.relay.FetchTokenSelf(ctx, relayKey.BaseURL, accessToken)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUpstreamRejected, err)
+	if existing != nil {
+		_ = s.repo.TouchIdentityLink(existing.ID)
+		return &ExchangeResult{
+			UserID:       existing.UserID,
+			RelayName:    relayKey.Name,
+			RelayBaseURL: relayKey.BaseURL,
+			CreatedUser:  false,
+		}, nil
 	}
 
-	username := fmt.Sprintf("np_%d_%d", relayKey.ID, self.ID)
-	user, err := s.userRepo.GetByUsername(username)
-	if err != nil {
-		return nil, err
+	username := fmt.Sprintf("np_%d_%s", relayKey.ID, randomToken(4))
+	userEmail := externalID
+	if strings.Contains(externalID, "@") {
+		userEmail = externalID
+	} else {
+		userEmail = username + "@relay.local"
 	}
-	createdUser := false
-	if user == nil {
-		userEmail := strings.TrimSpace(email)
-		if userEmail == "" {
-			userEmail = username + "@relay.local"
-		}
-		user = &models.User{
-			Username:     username,
-			Email:        userEmail,
-			PasswordHash: randomToken(24),
-			Role:         "user",
-			IsActive:     true,
-		}
-		if err := s.userRepo.Create(user); err != nil {
-			return nil, err
-		}
-		createdUser = true
+	user := &models.User{
+		Username:     username,
+		Email:        userEmail,
+		PasswordHash: randomToken(24),
+		Role:         "user",
+		IsActive:     true,
 	}
-
-	mintedName := fmt.Sprintf("clawmanager-%s-%d", username, time.Now().Unix())
-	mintedKey, err := s.relay.MintToken(ctx, relayKey.BaseURL, relayToken, mintedName, relayKey.DefaultDailyLimit)
-	if err != nil {
-		return nil, fmt.Errorf("newapi relay failed to mint trial token: %w", err)
-	}
-
-	encryptedKey, err := s.cipher.Encrypt(mintedKey)
-	if err != nil {
+	now := time.Now()
+	user.CreatedAt = now
+	user.UpdatedAt = now
+	if err := s.userRepo.Create(user); err != nil {
 		return nil, err
 	}
 
 	if err := s.repo.UpsertIdentityLink(&IdentityLink{
 		UserID:         user.ID,
 		RelayKeyID:     relayKey.ID,
-		UpstreamUserID: strconv.Itoa(self.ID),
-		AccessTokenEnc: encryptedKey,
+		ExternalID:     externalID,
+		UpstreamUserID: "",
+		AccessTokenEnc: relayKey.RelayTokenEnc,
 	}); err != nil {
 		return nil, err
 	}
@@ -244,13 +241,13 @@ func (s *service) ExchangeSSO(ctx context.Context, relayName, accessToken, email
 		UserID:       user.ID,
 		RelayName:    relayKey.Name,
 		RelayBaseURL: relayKey.BaseURL,
-		CreatedUser:  createdUser,
+		CreatedUser:  true,
 	}, nil
 }
 
-// ResolveCredential implements integration.CredentialResolver. It resolves a
-// per-user relay credential for gateway requests and enforces the module's
-// request-based daily breaker before handing out the credential.
+// ResolveCredential implements integration.CredentialResolver. It resolves the
+// shared relay API key for linked users and enforces the module's per-user
+// daily request breaker before handing out the credential.
 func (s *service) ResolveCredential(ctx context.Context, userID int) (*integration.CredentialOverride, error) {
 	if userID <= 0 {
 		return nil, nil

@@ -116,9 +116,8 @@ func (h *Handler) deleteRelay(c *gin.Context) {
 }
 
 type exchangeRequest struct {
-	RelayName   string `json:"relay_name"`
-	AccessToken string `json:"access_token"`
-	Email       string `json:"email"`
+	RelayName string `json:"relay_name"`
+	Email     string `json:"email"`
 }
 
 type exchangeResponse struct {
@@ -135,7 +134,7 @@ func (h *Handler) exchange(c *gin.Context) {
 		utils.ValidationError(c, err)
 		return
 	}
-	result, err := h.svc.ExchangeSSO(c.Request.Context(), req.RelayName, req.AccessToken, req.Email)
+	result, err := h.svc.ExchangeSSO(c.Request.Context(), req.RelayName, req.Email)
 	if err != nil {
 		writeServiceError(c, err)
 		return

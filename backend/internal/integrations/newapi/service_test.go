@@ -86,6 +86,17 @@ func (f *fakeRepo) GetIdentityLink(userID, relayKeyID int) (*IdentityLink, error
 	}
 	return nil, nil
 }
+func (f *fakeRepo) GetIdentityLinkByExternal(relayKeyID int, externalID string) (*IdentityLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, l := range f.links {
+		if l.RelayKeyID == relayKeyID && l.ExternalID == externalID {
+			cp := *l
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeRepo) ListIdentityLinksByUser(userID int) ([]IdentityLink, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -177,24 +188,18 @@ func (f *fakeUserStore) GetByUsername(username string) (*models.User, error) {
 }
 
 type fakeRelay struct {
-	selfID int
-	minted []string
-	key    string
-	err    error
+	valid bool
+	err   error
 }
 
-func (f *fakeRelay) FetchTokenSelf(ctx context.Context, baseURL, accessToken string) (TokenSelf, error) {
+func (f *fakeRelay) ValidateCredential(ctx context.Context, baseURL, apiKey string) error {
 	if f.err != nil {
-		return TokenSelf{}, f.err
+		return f.err
 	}
-	return TokenSelf{ID: f.selfID, Name: "relay-user"}, nil
-}
-func (f *fakeRelay) MintToken(ctx context.Context, baseURL, relayToken, name string, budget int64) (string, error) {
-	if f.err != nil {
-		return "", f.err
+	if !f.valid {
+		return ErrUpstreamRejected
 	}
-	f.minted = append(f.minted, name)
-	return f.key, nil
+	return nil
 }
 
 func testService(t *testing.T, repo *fakeRepo, users *fakeUserStore, relay RelayClient) Service {
@@ -246,7 +251,7 @@ func TestNewServiceRequiresKey(t *testing.T) {
 func TestExchangeSSO(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
-	relay := &fakeRelay{selfID: 42, key: "sk-minted-1"}
+	relay := &fakeRelay{valid: true}
 
 	// register a relay directly (encrypt token with a known cipher)
 	cipher, _ := newCipher("test-module-encryption-key-32-bytes-long!!")
@@ -254,7 +259,7 @@ func TestExchangeSSO(t *testing.T) {
 	repo.CreateRelayKey(&RelayKey{Name: "prod", BaseURL: "https://relay.example.com", RelayTokenEnc: encRelay, DefaultDailyLimit: 1000, CreatedBy: 1})
 
 	svc := testService(t, repo, users, relay)
-	res, err := svc.ExchangeSSO(context.Background(), "prod", "sk-user-access", "user@example.com")
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
 	if err != nil {
 		t.Fatalf("ExchangeSSO: %v", err)
 	}
@@ -264,15 +269,15 @@ func TestExchangeSSO(t *testing.T) {
 	if res.UserID == 0 {
 		t.Fatal("expected a valid user id")
 	}
-	// user's own access token must never be stored
+	// the shared relay key must never leak into the provisioned account
 	for _, u := range users.created {
-		if u.PasswordHash == "sk-user-access" || u.Email == "sk-user-access" {
-			t.Fatal("user's access token leaked into account")
+		if u.PasswordHash == "sk-relay-admin" || u.Email == "sk-relay-admin" {
+			t.Fatal("shared relay key leaked into account")
 		}
 	}
 
-	// subsequent exchange must reuse the same account
-	res2, err := svc.ExchangeSSO(context.Background(), "prod", "sk-user-access-2", "")
+	// subsequent exchange with the same external id must reuse the account
+	res2, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
 	if err != nil {
 		t.Fatalf("ExchangeSSO second time: %v", err)
 	}
@@ -284,26 +289,54 @@ func TestExchangeSSO(t *testing.T) {
 	}
 }
 
+func TestExchangeSSORequiresExternalID(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	svc := testService(t, repo, users, &fakeRelay{})
+	if _, err := svc.ExchangeSSO(context.Background(), "prod", ""); !errors.Is(err, ErrRelayInvalid) {
+		t.Fatalf("expected ErrRelayInvalid for empty external id, got %v", err)
+	}
+}
+
 func TestExchangeSSOUnknownRelay(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
 	svc := testService(t, repo, users, &fakeRelay{})
-	if _, err := svc.ExchangeSSO(context.Background(), "missing", "sk-x", ""); !errors.Is(err, ErrRelayNotFound) {
+	if _, err := svc.ExchangeSSO(context.Background(), "missing", "user@example.com"); !errors.Is(err, ErrRelayNotFound) {
 		t.Fatalf("expected ErrRelayNotFound, got %v", err)
+	}
+}
+
+func TestCreateRelayKeyValidatesCredential(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	relay := &fakeRelay{valid: false}
+	svc := testService(t, repo, users, relay)
+
+	if err := svc.CreateRelayKey(context.Background(), "bad", "https://relay.example.com", "sk-invalid", 1000, 1); !errors.Is(err, ErrUpstreamRejected) {
+		t.Fatalf("expected ErrUpstreamRejected for invalid credential, got %v", err)
+	}
+	if k, _ := repo.GetRelayKeyByName("bad"); k != nil {
+		t.Fatal("invalid relay must not be registered")
+	}
+
+	relay.valid = true
+	if err := svc.CreateRelayKey(context.Background(), "good", "https://relay.example.com", "sk-good", 1000, 1); err != nil {
+		t.Fatalf("valid relay registration failed: %v", err)
 	}
 }
 
 func TestResolveCredentialAndQuota(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
-	relay := &fakeRelay{selfID: 7, key: "sk-minted-9"}
+	relay := &fakeRelay{valid: true}
 
 	cipher, _ := newCipher("test-module-encryption-key-32-bytes-long!!")
 	encRelay, _ := cipher.Encrypt("sk-relay-admin")
 	repo.CreateRelayKey(&RelayKey{Name: "prod", BaseURL: "https://relay.example.com", RelayTokenEnc: encRelay, DefaultDailyLimit: 2, CreatedBy: 1})
 
 	svc := testService(t, repo, users, relay)
-	res, err := svc.ExchangeSSO(context.Background(), "prod", "sk-user", "")
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
 	if err != nil {
 		t.Fatalf("ExchangeSSO: %v", err)
 	}
@@ -313,7 +346,7 @@ func TestResolveCredentialAndQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveCredential #1: %v", err)
 	}
-	if ov1 == nil || ov1.BaseURL != "https://relay.example.com/v1" || ov1.APIKey != "sk-minted-9" {
+	if ov1 == nil || ov1.BaseURL != "https://relay.example.com/v1" || ov1.APIKey != "sk-relay-admin" {
 		t.Fatalf("unexpected override: %+v", ov1)
 	}
 	if _, err := svc.ResolveCredential(context.Background(), res.UserID); err != nil {

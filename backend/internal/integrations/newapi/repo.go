@@ -2,6 +2,7 @@ package newapi
 
 import (
 	"errors"
+	"time"
 
 	"github.com/upper/db/v4"
 )
@@ -16,6 +17,7 @@ type Repository interface {
 	DeleteRelayKey(id int) error
 
 	GetIdentityLink(userID, relayKeyID int) (*IdentityLink, error)
+	GetIdentityLinkByExternal(relayKeyID int, externalID string) (*IdentityLink, error)
 	ListIdentityLinksByUser(userID int) ([]IdentityLink, error)
 	UpsertIdentityLink(link *IdentityLink) error
 	TouchIdentityLink(id int) error
@@ -34,6 +36,19 @@ func NewRepository(sess db.Session) Repository {
 	return &relayRepository{sess: sess}
 }
 
+// ensureTimestamps mirrors the core repository helper so the module can set
+// insert timestamps without importing the core repository package (keeping the
+// dependency direction one-way).
+func ensureTimestamps(createdAt, updatedAt *time.Time) {
+	now := time.Now().UTC()
+	if createdAt != nil && createdAt.IsZero() {
+		*createdAt = now
+	}
+	if updatedAt != nil && updatedAt.IsZero() {
+		*updatedAt = now
+	}
+}
+
 func (r *relayRepository) relayKeys() db.Collection { return r.sess.Collection("newapi_relay_keys") }
 func (r *relayRepository) identityLinks() db.Collection {
 	return r.sess.Collection("newapi_identity_links")
@@ -43,6 +58,7 @@ func (r *relayRepository) trialQuotas() db.Collection {
 }
 
 func (r *relayRepository) CreateRelayKey(key *RelayKey) error {
+	ensureTimestamps(&key.CreatedAt, &key.UpdatedAt)
 	res, err := r.relayKeys().Insert(key)
 	if err != nil {
 		return err
@@ -105,6 +121,18 @@ func (r *relayRepository) GetIdentityLink(userID, relayKeyID int) (*IdentityLink
 	return &link, nil
 }
 
+func (r *relayRepository) GetIdentityLinkByExternal(relayKeyID int, externalID string) (*IdentityLink, error) {
+	var link IdentityLink
+	err := r.identityLinks().Find(db.Cond{"relay_key_id": relayKeyID, "external_id": externalID}).One(&link)
+	if err != nil {
+		if errors.Is(err, db.ErrNoMoreRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &link, nil
+}
+
 func (r *relayRepository) ListIdentityLinksByUser(userID int) ([]IdentityLink, error) {
 	var links []IdentityLink
 	err := r.identityLinks().Find(db.Cond{"user_id": userID}).OrderBy("-last_used_at", "id").All(&links)
@@ -120,6 +148,7 @@ func (r *relayRepository) UpsertIdentityLink(link *IdentityLink) error {
 		return err
 	}
 	if existing == nil {
+		ensureTimestamps(&link.CreatedAt, &link.UpdatedAt)
 		res, err := r.identityLinks().Insert(link)
 		if err != nil {
 			return err
@@ -129,6 +158,7 @@ func (r *relayRepository) UpsertIdentityLink(link *IdentityLink) error {
 	}
 	link.ID = existing.ID
 	return r.identityLinks().Find(db.Cond{"id": existing.ID}).Update(map[string]interface{}{
+		"external_id":      link.ExternalID,
 		"upstream_user_id": link.UpstreamUserID,
 		"access_token_enc": link.AccessTokenEnc,
 	})
@@ -164,6 +194,7 @@ func (r *relayRepository) UpsertTrialQuota(quota *TrialQuota) error {
 		return err
 	}
 	if existing == nil {
+		ensureTimestamps(&quota.CreatedAt, &quota.UpdatedAt)
 		res, err := r.trialQuotas().Insert(quota)
 		if err != nil {
 			return err

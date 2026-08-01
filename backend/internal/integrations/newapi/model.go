@@ -30,16 +30,19 @@ type RelayKey struct {
 // TableName returns the table name.
 func (RelayKey) TableName() string { return "newapi_relay_keys" }
 
-// IdentityLink maps a clawmanager user to a per-relay upstream credential. The
-// access token is encrypted at rest with the module's dedicated encryption key.
+// IdentityLink maps a clawmanager user to a relay account. The relay access
+// token is the shared relay API key, encrypted at rest with the module's
+// dedicated encryption key. ExternalID is the stable upstream identity handle
+// (e.g. the user's email) used to keep re-login idempotent across sessions.
 type IdentityLink struct {
-	ID             int        `db:"id,primarykey,autoincrement" json:"id"`
-	UserID         int        `db:"user_id" json:"user_id"`
-	RelayKeyID     int        `db:"relay_key_id" json:"relay_key_id"`
-	UpstreamUserID string     `db:"upstream_user_id" json:"upstream_user_id,omitempty"`
-	AccessTokenEnc string     `db:"access_token_enc" json:"-"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	ID             int       `db:"id,primarykey,autoincrement" json:"id"`
+	UserID         int       `db:"user_id" json:"user_id"`
+	RelayKeyID     int       `db:"relay_key_id" json:"relay_key_id"`
+	ExternalID     string    `db:"external_id" json:"external_id,omitempty"`
+	UpstreamUserID string    `db:"upstream_user_id" json:"upstream_user_id,omitempty"`
+	AccessTokenEnc string    `db:"access_token_enc" json:"-"`
+	CreatedAt      time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt      time.Time `db:"updated_at" json:"updated_at"`
 	LastUsedAt     *time.Time `db:"last_used_at" json:"last_used_at,omitempty"`
 }
 
