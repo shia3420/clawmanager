@@ -7,7 +7,10 @@ import LanguageSwitcher from '../../components/LanguageSwitcher';
 const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const { login, isLoading, error, clearError } = useAuth();
+  const [relayName, setRelayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [ssoLoading, setSsoLoading] = useState(false);
+  const { login, exchangeNewApi, isLoading, error, clearError } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
@@ -23,6 +26,22 @@ const LoginPage: React.FC = () => {
       navigate(from || '/dashboard', { replace: true });
     } catch (err) {
       // Error is handled by auth context
+    }
+  };
+
+  const handleNewApiExchange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearError();
+    setSsoLoading(true);
+
+    try {
+      await exchangeNewApi(relayName, email);
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from || '/dashboard', { replace: true });
+    } catch {
+      // Error is handled by auth context
+    } finally {
+      setSsoLoading(false);
     }
   };
 
@@ -126,6 +145,63 @@ const LoginPage: React.FC = () => {
             >
               {isLoading ? t('auth.signingIn') : t('auth.signIn')}
             </button>
+          </div>
+        </form>
+
+        <div className="flex items-center gap-3 pt-2">
+          <div className="h-px flex-1 bg-gray-200" />
+          <span className="text-xs font-medium uppercase tracking-[0.18em] text-gray-400">
+            {t('newapi.or')}
+          </span>
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        <form className="space-y-6" onSubmit={handleNewApiExchange}>
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="relayName" className="block text-sm font-medium text-gray-700">
+                {t('newapi.relayName')}
+              </label>
+              <input
+                id="relayName"
+                name="relayName"
+                type="text"
+                required
+                value={relayName}
+                onChange={(e) => setRelayName(e.target.value)}
+                className="app-input mt-1 block w-full"
+                placeholder={t('newapi.relayNamePlaceholder')}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="ssoEmail" className="block text-sm font-medium text-gray-700">
+                {t('newapi.email')}
+              </label>
+              <input
+                id="ssoEmail"
+                name="ssoEmail"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="app-input mt-1 block w-full"
+                placeholder={t('newapi.emailPlaceholder')}
+              />
+            </div>
+          </div>
+
+          <div>
+            <button
+              type="submit"
+              disabled={ssoLoading}
+              className="app-button-secondary flex w-full disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {ssoLoading ? t('newapi.exchanging') : t('newapi.exchange')}
+            </button>
+            <p className="mt-3 text-center text-xs leading-5 text-gray-500">
+              {t('newapi.exchangeHint')}
+            </p>
           </div>
         </form>
       </div>

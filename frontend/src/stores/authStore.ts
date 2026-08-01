@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { User } from '../types/auth';
 import { authService } from '../services/authService';
+import { newapiService } from '../services/newapiService';
 
 interface AuthState {
   user: User | null;
@@ -17,6 +18,7 @@ interface AuthState {
   // Async actions
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
+  exchangeNewApi: (relayName: string, email: string) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<void>;
   clearError: () => void;
@@ -66,6 +68,24 @@ export const useAuthStore = create<AuthState>((set) => {
         set({ 
           error: err.response?.data?.error || 'Registration failed', 
           isLoading: false 
+        });
+        throw err;
+      }
+    },
+
+    exchangeNewApi: async (relayName, email) => {
+      set({ isLoading: true, error: null });
+      try {
+        const result = await newapiService.exchange(relayName, email);
+        localStorage.setItem('access_token', result.session_token);
+        localStorage.setItem('refresh_token', '');
+        const user = await authService.getCurrentUser();
+        set({ user, isAuthenticated: true, isLoading: false });
+      } catch (err: any) {
+        set({
+          error: err.response?.data?.error || 'New API exchange failed',
+          isLoading: false,
+          isAuthenticated: false,
         });
         throw err;
       }

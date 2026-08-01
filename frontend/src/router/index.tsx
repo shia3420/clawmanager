@@ -23,6 +23,7 @@ import AdminSecurityReportsPage from '../pages/admin/security/AdminSecurityRepor
 import AdminSecurityScannerConfigPage from '../pages/admin/security/AdminSecurityScannerConfigPage';
 import RiskRulesPage from '../pages/admin/RiskRulesPage';
 import ModelManagementPage from '../pages/admin/ModelManagementPage';
+import NewApiRelaysPage from '../pages/admin/NewApiRelaysPage';
 import SystemSettingsPage from '../pages/admin/SystemSettingsPage';
 import RuntimePodsPage from '../pages/admin/RuntimePodsPage';
 import UserSettingsPage from '../pages/settings/UserSettingsPage';
@@ -497,6 +498,14 @@ function AppRoutes() {
         element={
           <AdminRoute>
             <ModelManagementPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/newapi-relays"
+        element={
+          <AdminRoute>
+            <NewApiRelaysPage />
           </AdminRoute>
         }
       />

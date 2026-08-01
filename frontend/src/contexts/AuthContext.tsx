@@ -8,6 +8,7 @@ interface AuthContextType {
   error: string | null;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
+  exchangeNewApi: (relayName: string, email: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
@@ -33,6 +34,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     error: store.error,
     login: store.login,
     register: store.register,
+    exchangeNewApi: store.exchangeNewApi,
     logout: store.logout,
     clearError: store.clearError,
   };

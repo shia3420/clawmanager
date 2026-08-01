@@ -9,6 +9,7 @@ import {
   Home,
   LogOut,
   Monitor,
+  Network,
   Server,
   Settings,
   Shield,
@@ -74,8 +75,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
       path: '/admin/ai-gateway',
       label: t('nav.aiGateway'),
       icon: Bot,
-      matchPaths: ['/admin/models', '/admin/ai-audit', '/admin/costs', '/admin/risk-rules', '/admin/session-usage'],
+      matchPaths: ['/admin/models', '/admin/ai-audit', '/admin/costs', '/admin/risk-rules', '/admin/session-usage', '/admin/newapi-relays'],
     },
+    { path: '/admin/newapi-relays', label: t('newapi.navLabel'), icon: Network },
     { path: '/admin/settings', label: t('nav.settings'), icon: Settings },
   ];
 
