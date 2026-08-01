@@ -17,6 +17,32 @@ var embeddedMigrations embed.FS
 
 const schemaMigrationsTable = "schema_migrations"
 
+// migrationSource is an embedded SQL directory contributed by an integration
+// module. Registration is purely additive: the core migrations directory keeps
+// its default behaviour and module sources simply extend the set of files that
+// are applied in filename order.
+type migrationSource struct {
+	fs  embed.FS
+	dir string
+}
+
+var extraMigrationSources []migrationSource
+
+// RegisterMigrationSource registers an additional embedded migrations directory
+// (e.g. contributed by an integration module). Migration filenames must be
+// globally unique across all sources because the schema_migrations table tracks
+// them by filename. Registration is expected to happen during init or startup
+// wiring, before applyEmbeddedMigrations runs.
+func RegisterMigrationSource(fs embed.FS, dir string) {
+	extraMigrationSources = append(extraMigrationSources, migrationSource{fs: fs, dir: dir})
+}
+
+type migrationFile struct {
+	fs   embed.FS
+	path string
+	name string
+}
+
 func applyEmbeddedMigrations(session db.Session) error {
 	if err := ensureSchemaMigrationsTable(session); err != nil {
 		return err
@@ -27,43 +53,52 @@ func applyEmbeddedMigrations(session db.Session) error {
 		return err
 	}
 
-	entries, err := embeddedMigrations.ReadDir("migrations")
-	if err != nil {
-		return fmt.Errorf("failed to list embedded migrations: %w", err)
+	sources := []migrationSource{{fs: embeddedMigrations, dir: "migrations"}}
+	sources = append(sources, extraMigrationSources...)
+
+	files := make([]migrationFile, 0)
+	for _, source := range sources {
+		entries, err := source.fs.ReadDir(source.dir)
+		if err != nil {
+			return fmt.Errorf("failed to list embedded migrations in %s: %w", source.dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+				continue
+			}
+			files = append(files, migrationFile{fs: source.fs, path: path.Join(source.dir, entry.Name()), name: entry.Name()})
+		}
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].name < files[j].name
 	})
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		if _, ok := applied[entry.Name()]; ok {
+	for _, file := range files {
+		if _, ok := applied[file.name]; ok {
 			continue
 		}
 
-		rawSQL, err := embeddedMigrations.ReadFile(path.Join("migrations", entry.Name()))
+		rawSQL, err := file.fs.ReadFile(file.path)
 		if err != nil {
-			return fmt.Errorf("failed to read embedded migration %s: %w", entry.Name(), err)
+			return fmt.Errorf("failed to read embedded migration %s: %w", file.name, err)
 		}
 
 		statements := splitSQLStatements(string(rawSQL))
 		for idx, statement := range statements {
 			if _, err := session.SQL().Exec(statement); err != nil {
-				return fmt.Errorf("failed to execute migration %s statement %d: %w", entry.Name(), idx+1, err)
+				return fmt.Errorf("failed to execute migration %s statement %d: %w", file.name, idx+1, err)
 			}
 		}
 
 		if _, err := session.SQL().Exec(
 			fmt.Sprintf("INSERT INTO %s (filename, applied_at) VALUES (?, ?)", schemaMigrationsTable),
-			entry.Name(),
+			file.name,
 			time.Now().UTC(),
 		); err != nil {
-			return fmt.Errorf("failed to record applied migration %s: %w", entry.Name(), err)
+			return fmt.Errorf("failed to record applied migration %s: %w", file.name, err)
 		}
 
-		log.Printf("Applied database migration %s", entry.Name())
+		log.Printf("Applied database migration %s", file.name)
 	}
 
 	return nil

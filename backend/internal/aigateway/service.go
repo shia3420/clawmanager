@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"clawreef/internal/integration"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
 	"clawreef/internal/services"
@@ -280,6 +281,7 @@ type Service interface {
 	ListAvailableModels() ([]AvailableModel, error)
 	ChatCompletions(ctx context.Context, userID int, req ChatCompletionRequest) (*ProxyResponse, string, error)
 	StreamChatCompletions(ctx context.Context, userID int, req ChatCompletionRequest, w http.ResponseWriter) (string, error)
+	SetCredentialResolver(r integration.CredentialResolver)
 }
 
 type service struct {
@@ -293,6 +295,16 @@ type service struct {
 	chatMessageService services.ChatMessageService
 	secretRefService   services.SecretRefService
 	httpClient         *http.Client
+	credentialResolver integration.CredentialResolver
+}
+
+// SetCredentialResolver installs an optional per-user upstream credential
+// resolver (e.g. a token-relay integration module). When set, chat requests
+// whose user has a resolved override route to the override endpoint instead of
+// the model's configured one. This is additive: when unset (nil) the gateway
+// behaves exactly as before.
+func (s *service) SetCredentialResolver(r integration.CredentialResolver) {
+	s.credentialResolver = r
 }
 
 // NewService creates a new AI gateway service.
@@ -577,7 +589,35 @@ func (s *service) prepareChatRequest(userID int, req ChatCompletionRequest) (*pr
 	}
 
 	prepared.resolvedModel = resolvedModel
+
+	s.applyCredentialOverride(prepared)
+
 	return prepared, nil
+}
+
+// applyCredentialOverride consults the optional integration credential resolver
+// and, when it returns a per-user override, replaces the resolved model's
+// endpoint/credential with the relayed ones. The check is strictly additive and
+// nil-safe: errors and empty overrides fall back to the model's configured
+// endpoint.
+func (s *service) applyCredentialOverride(prepared *preparedChatRequest) {
+	if s.credentialResolver == nil {
+		return
+	}
+	override, err := s.credentialResolver.ResolveCredential(context.Background(), prepared.userID)
+	if err != nil || override == nil {
+		return
+	}
+	baseURL := strings.TrimSpace(override.BaseURL)
+	apiKey := strings.TrimSpace(override.APIKey)
+	if baseURL == "" || apiKey == "" {
+		return
+	}
+	clone := *prepared.resolvedModel
+	clone.BaseURL = baseURL
+	clone.APIKey = &apiKey
+	clone.APIKeySecretRef = nil
+	prepared.resolvedModel = &clone
 }
 
 func (s *service) callOpenAICompatible(ctx context.Context, prepared *preparedChatRequest) (*ProxyResponse, string, error) {

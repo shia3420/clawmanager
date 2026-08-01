@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"clawreef/internal/config"
 	"clawreef/internal/db"
 	"clawreef/internal/handlers"
+	"clawreef/internal/integrations/newapi"
 	"clawreef/internal/middleware"
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
@@ -30,6 +31,15 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// New API integration module is opt-in and purely additive. When enabled it
+	// contributes its own (newapi_-prefixed) migration sources.
+	newAPIModuleEnabled := strings.TrimSpace(os.Getenv("NEWAPI_MODULE_ENABLED")) == "1"
+	if newAPIModuleEnabled {
+		migrationsFS, migrationsDir := newapi.Migrations()
+		db.RegisterMigrationSource(migrationsFS, migrationsDir)
+		log.Println("newapi integration module migrations registered")
 	}
 
 	// Initialize database
@@ -158,6 +168,30 @@ func main() {
 	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
 	agentVariantTemplateService := services.NewAgentVariantTemplateService(agentVariantTemplateRepo)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
+
+	// New API token-relay / SSO integration module (opt-in, additive). The module
+	// never touches core code paths; it only plugs the gateway CredentialResolver
+	// seam and mounts its own route prefix.
+	var newAPIHandler *newapi.Handler
+	if newAPIModuleEnabled {
+		newAPISvc, svcErr := newapi.NewService(
+			newapi.NewRepository(database),
+			userRepo,
+			newapi.NewRelayClient(),
+			newapi.Config{
+				EncryptionKey: strings.TrimSpace(os.Getenv(newapi.NewAPIModuleEncryptionKeyEnv)),
+				JWTSecret:     cfg.JWT.Secret,
+				JWTExpiry:     time.Duration(cfg.JWT.AccessExpiry) * time.Minute,
+			},
+		)
+		if svcErr != nil {
+			log.Printf("newapi integration module disabled: %v", svcErr)
+		} else {
+			aiGatewayService.SetCredentialResolver(newAPISvc)
+			newAPIHandler = newapi.NewHandler(newAPISvc, cfg.JWT.Secret, time.Duration(cfg.JWT.AccessExpiry)*time.Minute)
+			log.Printf("newapi integration module enabled")
+		}
+	}
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
@@ -646,6 +680,12 @@ func main() {
 			agent.POST("/skills/upload", agentHandler.UploadSkillPackage)
 			agent.GET("/skills/versions/:skillVersion/download", agentHandler.DownloadSkillVersion)
 			agent.GET("/config/revisions/:id", agentHandler.GetConfigRevision)
+		}
+
+		// New API integration module routes (opt-in; mounted under its own
+		// prefix so core routes are untouched when the module is disabled).
+		if newAPIHandler != nil {
+			newAPIHandler.RegisterRoutes(api, userRepo)
 		}
 
 		// Instance proxy routes (token-based auth, no session required)
