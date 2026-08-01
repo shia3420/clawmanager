@@ -23,6 +23,15 @@ type LLMModelService interface {
 	SaveModel(req SaveLLMModelRequest) (*models.LLMModel, error)
 	DeleteModel(id int) error
 	DiscoverProviderModels(req DiscoverLLMModelsRequest) ([]DiscoveredLLMModel, error)
+	TestModelConnection(id int) (*TestConnectionResult, error)
+}
+
+// TestConnectionResult contains the outcome of a model connectivity test.
+type TestConnectionResult struct {
+	Success    bool     `json:"success"`
+	Message    string   `json:"message"`
+	Models     []string `json:"models,omitempty"`
+	ProviderID int      `json:"provider_id,omitempty"`
 }
 
 // SaveLLMModelRequest contains editable model catalog fields.
@@ -215,6 +224,266 @@ func (s *llmModelService) DeleteModel(id int) error {
 		return fmt.Errorf("failed to delete llm model: %w", err)
 	}
 	return nil
+}
+
+func (s *llmModelService) TestModelConnection(id int) (*TestConnectionResult, error) {
+	model, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get model: %w", err)
+	}
+	if model == nil {
+		return nil, errors.New("model not found")
+	}
+
+	providerType := strings.TrimSpace(strings.ToLower(model.ProviderType))
+	protocolType := models.ResolveLLMProtocolTypeOrDefault(providerType, model.ProtocolType)
+	baseURL := strings.TrimSpace(model.BaseURL)
+
+	resolvedAPIKey, err := s.secretRefService.ResolveString(context.Background(), model.APIKey, model.APIKeySecretRef)
+	if err != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to resolve credentials: %s", err.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	var apiKey string
+	if resolvedAPIKey != nil {
+		apiKey = strings.TrimSpace(*resolvedAPIKey)
+	}
+
+	switch protocolType {
+	case models.ProtocolTypeOpenAI, models.ProtocolTypeOpenAICompatible:
+		return s.testOpenAICompatibleConnection(model, baseURL, apiKey)
+	case models.ProtocolTypeAnthropic:
+		return s.testAnthropicConnection(model, baseURL, apiKey)
+	case models.ProtocolTypeGoogle:
+		return s.testGoogleConnection(model, baseURL, apiKey)
+	case models.ProtocolTypeAzureOpenAI:
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    "Connection testing is not supported for Azure OpenAI yet",
+			ProviderID: model.ID,
+		}, nil
+	default:
+		// For unknown provider types, try a basic HTTP GET to the base URL
+		return s.testGenericConnection(model, baseURL, apiKey)
+	}
+}
+
+func (s *llmModelService) testOpenAICompatibleConnection(model *models.LLMModel, baseURL, apiKey string) (*TestConnectionResult, error) {
+	endpoint, buildErr := buildProviderEndpoint(baseURL, "v1", "models")
+	if buildErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Invalid base URL: %s", buildErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	request, reqErr := http.NewRequest(http.MethodGet, endpoint, nil)
+	if reqErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to build request: %s", reqErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	type modelItem struct {
+		ID string `json:"id"`
+	}
+	type responsePayload struct {
+		Data []modelItem `json:"data"`
+	}
+
+	var payload responsePayload
+	if err := s.doJSON(request, &payload); err != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Connection failed: %s", err.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	modelNames := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			modelNames = append(modelNames, id)
+		}
+	}
+
+	msg := "Connected successfully"
+	if len(modelNames) > 0 {
+		msg = fmt.Sprintf("Connected successfully, %d model(s) available", len(modelNames))
+	}
+
+	return &TestConnectionResult{
+		Success:    true,
+		Message:    msg,
+		Models:     modelNames,
+		ProviderID: model.ID,
+	}, nil
+}
+
+func (s *llmModelService) testAnthropicConnection(model *models.LLMModel, baseURL, apiKey string) (*TestConnectionResult, error) {
+	endpoint, buildErr := buildProviderEndpoint(baseURL, "v1", "models")
+	if buildErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Invalid base URL: %s", buildErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	request, reqErr := http.NewRequest(http.MethodGet, endpoint, nil)
+	if reqErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to build request: %s", reqErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+	request.Header.Set("anthropic-version", "2023-06-01")
+	if apiKey != "" {
+		request.Header.Set("x-api-key", apiKey)
+	}
+
+	type modelItem struct {
+		ID string `json:"id"`
+	}
+	type responsePayload struct {
+		Data []modelItem `json:"data"`
+	}
+
+	var payload responsePayload
+	if err := s.doJSON(request, &payload); err != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Connection failed: %s", err.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	modelNames := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			modelNames = append(modelNames, id)
+		}
+	}
+
+	msg := "Connected successfully"
+	if len(modelNames) > 0 {
+		msg = fmt.Sprintf("Connected successfully, %d model(s) available", len(modelNames))
+	}
+
+	return &TestConnectionResult{
+		Success:    true,
+		Message:    msg,
+		Models:     modelNames,
+		ProviderID: model.ID,
+	}, nil
+}
+
+func (s *llmModelService) testGoogleConnection(model *models.LLMModel, baseURL, apiKey string) (*TestConnectionResult, error) {
+	endpoint, buildErr := buildProviderEndpoint(baseURL, "v1beta", "models")
+	if buildErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Invalid base URL: %s", buildErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	if apiKey != "" {
+		separator := "?"
+		if strings.Contains(endpoint, "?") {
+			separator = "&"
+		}
+		endpoint = endpoint + separator + "key=" + url.QueryEscape(apiKey)
+	}
+
+	request, reqErr := http.NewRequest(http.MethodGet, endpoint, nil)
+	if reqErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to build request: %s", reqErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	type modelItem struct {
+		Name string `json:"name"`
+	}
+	type responsePayload struct {
+		Models []modelItem `json:"models"`
+	}
+
+	var payload responsePayload
+	if err := s.doJSON(request, &payload); err != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Connection failed: %s", err.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	modelNames := make([]string, 0, len(payload.Models))
+	for _, item := range payload.Models {
+		if name := strings.TrimSpace(strings.TrimPrefix(item.Name, "models/")); name != "" {
+			modelNames = append(modelNames, name)
+		}
+	}
+
+	msg := "Connected successfully"
+	if len(modelNames) > 0 {
+		msg = fmt.Sprintf("Connected successfully, %d model(s) available", len(modelNames))
+	}
+
+	return &TestConnectionResult{
+		Success:    true,
+		Message:    msg,
+		Models:     modelNames,
+		ProviderID: model.ID,
+	}, nil
+}
+
+func (s *llmModelService) testGenericConnection(model *models.LLMModel, baseURL, apiKey string) (*TestConnectionResult, error) {
+	request, reqErr := http.NewRequest(http.MethodGet, baseURL, nil)
+	if reqErr != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to build request: %s", reqErr.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	response, err := s.httpClient.Do(request)
+	if err != nil {
+		return &TestConnectionResult{
+			Success:    false,
+			Message:    fmt.Sprintf("Connection failed: %s", err.Error()),
+			ProviderID: model.ID,
+		}, nil
+	}
+	defer response.Body.Close()
+
+	msg := fmt.Sprintf("Connected successfully (HTTP %d)", response.StatusCode)
+
+	return &TestConnectionResult{
+		Success:    true,
+		Message:    msg,
+		ProviderID: model.ID,
+	}, nil
 }
 
 func (s *llmModelService) DiscoverProviderModels(req DiscoverLLMModelsRequest) ([]DiscoveredLLMModel, error) {

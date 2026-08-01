@@ -8,6 +8,7 @@ import {
   Package,
   Settings,
   SlidersHorizontal,
+  Store,
   Users,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -48,6 +49,7 @@ const UserLayout: React.FC<UserLayoutProps> = ({
   const navItems: UserNavItem[] = [
     { path: '/dashboard', label: t('nav.userDashboard'), icon: Home, exact: true },
     { path: '/instances', label: t('nav.myInstances'), icon: Monitor },
+    { path: '/marketplace', label: t('nav.marketplace'), icon: Store },
     { path: '/teams', label: 'Teams', icon: Users },
     { path: '/openclaw-configs', label: t('nav.openClawConfigs'), icon: SlidersHorizontal },
     { path: '/skill-hub', label: t('nav.skillHub'), icon: Package },

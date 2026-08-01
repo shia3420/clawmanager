@@ -77,6 +77,7 @@ func main() {
 	skillRepo := repository.NewSkillRepository(database)
 	securityScanRepo := repository.NewSecurityScanRepository(database)
 	instanceExternalAccessRepo := repository.NewInstanceExternalAccessRepository(database)
+	agentVariantTemplateRepo := repository.NewAgentVariantTemplateRepository(database)
 
 	if repaired, repairErr := services.RepairSeededAdminPassword(userRepo); repairErr != nil {
 		log.Printf("Warning: failed to repair seeded admin password: %v", repairErr)
@@ -155,6 +156,7 @@ func main() {
 	services.ConfigureSkillRuntimeSync(skillService, bindingRepo, runtimePodRepo, runtimeAgentClient)
 	securityScanService := services.NewSecurityScanService(securityScanRepo, skillRepo, objectStorageService, skillScannerClient)
 	externalAccessService := services.NewInstanceExternalAccessService(instanceExternalAccessRepo)
+	agentVariantTemplateService := services.NewAgentVariantTemplateService(agentVariantTemplateRepo)
 	aiGatewayService := aigateway.NewService(llmModelRepo, modelInvocationService, auditEventService, costRecordService, riskDetectionService, riskHitService, chatSessionService, chatMessageService)
 
 	// Initialize handlers
@@ -188,6 +190,7 @@ func main() {
 	workspaceFileHandler := handlers.NewWorkspaceFileHandler(instanceService, workspaceFileService, runtimeWorkspaceFileService)
 	workspaceFileHandler.SetSkillRepository(skillRepo)
 	runtimeAgentHandler := handlers.NewRuntimeAgentHandler(cfg.Runtime, runtimePodRepo, bindingRepo, instanceRepo, runtimeEvents, skillService)
+	agentVariantTemplateHandler := handlers.NewVariantTemplateHandler(agentVariantTemplateService)
 
 	// Initialize WebSocket hub and handler
 	wsHub := services.GetHub()
@@ -404,6 +407,16 @@ func main() {
 			instances.DELETE("/:id/skills/:skillId", skillHandler.RemoveSkillFromInstance)
 		}
 
+		// Agent marketplace routes (authenticated)
+		agentVariants := api.Group("/agent-variants")
+		agentVariants.Use(middleware.Auth())
+		agentVariants.Use(middleware.SetUserInfo(userRepo))
+		{
+			agentVariants.GET("", agentVariantTemplateHandler.ListPublic)
+			agentVariants.GET("/:slug", agentVariantTemplateHandler.GetBySlug)
+			agentVariants.POST("/:slug/usage", agentVariantTemplateHandler.RecordUsage)
+		}
+
 		// Admin console: cross-user instance listing. Gated by admin
 		// middleware 鈥?non-admin callers get 403. The workspace
 		// /instances endpoint above stays caller-scoped regardless of
@@ -544,6 +557,7 @@ func main() {
 			adminModels.GET("", llmModelHandler.ListModels)
 			adminModels.POST("/discover", llmModelHandler.DiscoverModels)
 			adminModels.PUT("", llmModelHandler.UpsertModel)
+			adminModels.POST("/:id/test", llmModelHandler.TestModel)
 			adminModels.DELETE("/:id", llmModelHandler.DeleteModel)
 		}
 

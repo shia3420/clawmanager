@@ -53,34 +53,34 @@ type ChatMessage struct {
 
 // ChatCompletionRequest is the platform gateway request shape.
 type ChatCompletionRequest struct {
-	RawBody           []byte          `json:"-"`
-	Model             string          `json:"model"`
-	Messages          []ChatMessage   `json:"messages"`
-	Temperature       *float64        `json:"temperature,omitempty"`
-	TopP              *float64        `json:"top_p,omitempty"`
-	MaxTokens         *int            `json:"max_tokens,omitempty"`
-	Stream            bool            `json:"stream"`
-	Tools             json.RawMessage `json:"tools,omitempty"`
-	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`
-	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
-	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
-	Stop              json.RawMessage `json:"stop,omitempty"`
-	N                 *int            `json:"n,omitempty"`
-	FrequencyPenalty  *float64        `json:"frequency_penalty,omitempty"`
-	PresencePenalty   *float64        `json:"presence_penalty,omitempty"`
-	ReasoningEffort   *string         `json:"reasoning_effort,omitempty"`
-	StreamOptions     json.RawMessage `json:"stream_options,omitempty"`
-	User              *string         `json:"user,omitempty"`
-	SessionID         *string         `json:"session_id,omitempty"`
-	OpenClawSessionKey *string        `json:"-"`
+	RawBody            []byte          `json:"-"`
+	Model              string          `json:"model"`
+	Messages           []ChatMessage   `json:"messages"`
+	Temperature        *float64        `json:"temperature,omitempty"`
+	TopP               *float64        `json:"top_p,omitempty"`
+	MaxTokens          *int            `json:"max_tokens,omitempty"`
+	Stream             bool            `json:"stream"`
+	Tools              json.RawMessage `json:"tools,omitempty"`
+	ToolChoice         json.RawMessage `json:"tool_choice,omitempty"`
+	ParallelToolCalls  *bool           `json:"parallel_tool_calls,omitempty"`
+	ResponseFormat     json.RawMessage `json:"response_format,omitempty"`
+	Stop               json.RawMessage `json:"stop,omitempty"`
+	N                  *int            `json:"n,omitempty"`
+	FrequencyPenalty   *float64        `json:"frequency_penalty,omitempty"`
+	PresencePenalty    *float64        `json:"presence_penalty,omitempty"`
+	ReasoningEffort    *string         `json:"reasoning_effort,omitempty"`
+	StreamOptions      json.RawMessage `json:"stream_options,omitempty"`
+	User               *string         `json:"user,omitempty"`
+	SessionID          *string         `json:"session_id,omitempty"`
+	OpenClawSessionKey *string         `json:"-"`
 	ManagedAgentType   *string         `json:"-"`
-	InstanceID        *int            `json:"instance_id,omitempty"`
-	InstanceMode      *string         `json:"instance_mode,omitempty"`
-	RuntimeType       *string         `json:"runtime_type,omitempty"`
-	GatewayID         *string         `json:"gateway_id,omitempty"`
-	RuntimePodID      *int64          `json:"runtime_pod_id,omitempty"`
-	TraceID           *string         `json:"trace_id,omitempty"`
-	RequestID         *string         `json:"request_id,omitempty"`
+	InstanceID         *int            `json:"instance_id,omitempty"`
+	InstanceMode       *string         `json:"instance_mode,omitempty"`
+	RuntimeType        *string         `json:"runtime_type,omitempty"`
+	GatewayID          *string         `json:"gateway_id,omitempty"`
+	RuntimePodID       *int64          `json:"runtime_pod_id,omitempty"`
+	TraceID            *string         `json:"trace_id,omitempty"`
+	RequestID          *string         `json:"request_id,omitempty"`
 }
 
 // ChatCompletionResponse is used for audit parsing only.
@@ -1471,7 +1471,10 @@ func buildProviderHTTPRequest(ctx context.Context, traceID, requestID string, mo
 }
 
 func buildOpenAICompatibleProviderHTTPRequest(ctx context.Context, traceID, requestID string, model *models.LLMModel, providerRequestBody []byte, resolvedAPIKey *string, acceptStream bool) (*http.Request, error) {
-	endpoint := strings.TrimRight(strings.TrimSpace(model.BaseURL), "/") + "/chat/completions"
+	endpoint, err := buildProviderAPIEndpoint(model.BaseURL, "v1", "chat/completions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build provider endpoint: %w", err)
+	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(providerRequestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build provider request: %w", err)

@@ -1,6 +1,7 @@
 package aigateway
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -537,6 +538,80 @@ func TestResolveSessionIDPrefersExplicitSessionThenOpenAIUser(t *testing.T) {
 	openAIUser := "agent:main:direct:bob"
 	if got := resolveSessionID(ChatCompletionRequest{User: &openAIUser}); got != openAIUser {
 		t.Fatalf("expected OpenAI user to become session id %q, got %q", openAIUser, got)
+	}
+}
+
+func TestBuildProviderAPIEndpointNormalizesMissingVersionPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "bare host gains v1",
+			baseURL: "https://api.chase-science.cn",
+			want:    "https://api.chase-science.cn/v1/chat/completions",
+		},
+		{
+			name:    "host with trailing slash gains v1",
+			baseURL: "https://api.chase-science.cn/",
+			want:    "https://api.chase-science.cn/v1/chat/completions",
+		},
+		{
+			name:    "existing v1 preserved",
+			baseURL: "https://api.chase-science.cn/v1",
+			want:    "https://api.chase-science.cn/v1/chat/completions",
+		},
+		{
+			name:    "other version segment preserved",
+			baseURL: "https://api.example.com/v2",
+			want:    "https://api.example.com/v2/chat/completions",
+		},
+		{
+			name:    "nested path preserved",
+			baseURL: "https://api.example.com/gateway/openai/v1",
+			want:    "https://api.example.com/gateway/openai/v1/chat/completions",
+		},
+		{
+			name:    "empty base URL errors",
+			baseURL: "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildProviderAPIEndpoint(tt.baseURL, "v1", "chat/completions")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for base URL %q", tt.baseURL)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestOpenAICompatibleRequestUsesNormalizedEndpoint(t *testing.T) {
+	model := &models.LLMModel{
+		BaseURL:           "https://api.chase-science.cn",
+		ProviderModelName: "deepseek/deepseek-v4-flash",
+	}
+
+	apiKey := "sk-test"
+	httpRequest, err := buildOpenAICompatibleProviderHTTPRequest(context.Background(), "trc", "req", model, []byte(`{}`), &apiKey, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := httpRequest.URL.String(), "https://api.chase-science.cn/v1/chat/completions"; got != want {
+		t.Fatalf("expected endpoint %q, got %q", want, got)
 	}
 }
 

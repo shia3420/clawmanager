@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useI18n } from '../../contexts/I18nContext';
 import LanguageSwitcher from '../../components/LanguageSwitcher';
@@ -10,6 +10,7 @@ const LoginPage: React.FC = () => {
   const { login, isLoading, error, clearError } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const formRef = useRef<HTMLFormElement | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -18,7 +19,8 @@ const LoginPage: React.FC = () => {
     
     try {
       await login(username, password);
-      navigate('/dashboard');
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from || '/dashboard', { replace: true });
     } catch (err) {
       // Error is handled by auth context
     }

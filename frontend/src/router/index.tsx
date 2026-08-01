@@ -57,6 +57,10 @@ import TeamListPage from '../pages/teams/TeamListPage';
 import CreateTeamPage from '../pages/teams/CreateTeamPage';
 import TeamDetailPage from '../pages/teams/TeamDetailPage';
 import SkillHubPage from '../pages/skill-hub/SkillHubPage';
+import AgentMarketplacePage from '../pages/marketplace/AgentMarketplacePage';
+import AgentDetailPage from '../pages/marketplace/AgentDetailPage';
+import QuickCreatePage from '../pages/marketplace/QuickCreatePage';
+import LandingPage from '../pages/landing/LandingPage';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -246,6 +250,30 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <SkillHubPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/marketplace"
+        element={
+          <ProtectedRoute>
+            <AgentMarketplacePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/marketplace/:slug"
+        element={
+          <ProtectedRoute>
+            <AgentDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/marketplace/:slug/quick-create"
+        element={
+          <ProtectedRoute>
+            <QuickCreatePage />
           </ProtectedRoute>
         }
       />
@@ -481,8 +509,11 @@ function AppRoutes() {
         }
       />
 
+      {/* Public Landing */}
+      <Route path="/" element={<LandingPage />} />
+
       {/* Default Redirect */}
-      <Route path="/" element={<DashboardRedirect />} />
+      <Route path="*" element={<DashboardRedirect />} />
     </Routes>
   );
 }

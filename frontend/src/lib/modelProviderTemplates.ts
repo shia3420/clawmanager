@@ -164,6 +164,16 @@ export const BUILTIN_PROVIDER_TEMPLATES: ProviderTemplate[] = [
     requiresApiKey: false,
     keywords: ['ollama', 'localhost', 'local', 'internal'],
   },
+  {
+    id: 'openai-compatible-custom',
+    label: 'OpenAI Compatible (Custom)',
+    providerType: 'openai-compatible',
+    protocolType: 'openai-compatible',
+    baseUrl: 'http://placeholder:8000/v1',
+    allowCustomBaseUrl: true,
+    requiresApiKey: false,
+    keywords: ['custom', 'generic', 'openai compatible', 'self-hosted', 'local'],
+  },
 ];
 
 export function normalizeBaseUrl(baseUrl: string) {

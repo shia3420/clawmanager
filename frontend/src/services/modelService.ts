@@ -24,6 +24,13 @@ export interface DiscoveredProviderModel {
   display_name: string;
 }
 
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
+  models?: string[];
+  provider_id?: number;
+}
+
 export const modelService = {
   getModels: async (): Promise<LLMModel[]> => {
     const response = await api.get('/admin/models');
@@ -48,5 +55,10 @@ export const modelService = {
 
   deleteModel: async (id: number): Promise<void> => {
     await api.delete(`/admin/models/${id}`);
+  },
+
+  testModel: async (id: number): Promise<TestConnectionResult> => {
+    const response = await api.post(`/admin/models/${id}/test`);
+    return response.data.data;
   },
 };

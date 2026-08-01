@@ -4,6 +4,7 @@ import {
   modelService,
   type DiscoveredProviderModel,
   type LLMModel,
+  type TestConnectionResult,
 } from '../../services/modelService';
 import { useI18n } from '../../contexts/I18nContext';
 import {
@@ -41,6 +42,9 @@ interface EditableModel extends LLMModel {
   discovery_error?: string | null;
   discovered_models?: DiscoveredProviderModel[];
   discovery_key?: string;
+  testing?: boolean;
+  test_result?: TestConnectionResult | null;
+  test_error?: string | null;
   edit_snapshot?: EditableModelSnapshot;
 }
 
@@ -103,6 +107,9 @@ const createEmptyModel = (): EditableModel => ({
   error: null,
   discovery_error: null,
   discovered_models: [],
+  testing: false,
+  test_result: null,
+  test_error: null,
 });
 
 const AUTO_DISCOVERY_PROVIDERS = new Set([
@@ -514,6 +521,9 @@ const ModelManagementPage: React.FC = () => {
           discovery_error: null,
           discovered_models: [],
           edit_snapshot: undefined,
+          testing: false,
+          test_result: null,
+          test_error: null,
         })));
       } catch (error: any) {
         setPageError(error.response?.data?.error || t('modelManagementPage.loadFailed'));
@@ -757,6 +767,34 @@ const ModelManagementPage: React.FC = () => {
     }
   };
 
+  const testConnection = async (card: EditableModel) => {
+    const modelId = card.id;
+    if (!modelId) {
+      return;
+    }
+
+    updateCard(card.local_id, {
+      testing: true,
+      test_result: null,
+      test_error: null,
+    });
+
+    try {
+      const result = await modelService.testModel(modelId);
+      updateCard(card.local_id, {
+        testing: false,
+        test_result: result,
+        test_error: result.success ? null : result.message,
+      });
+    } catch (error: any) {
+      updateCard(card.local_id, {
+        testing: false,
+        test_result: null,
+        test_error: error.response?.data?.error || error.message || t('modelManagementPage.testConnectionFailed'),
+      });
+    }
+  };
+
   return (
     <AdminLayout title={t('nav.models')}>
       <div className="space-y-6">
@@ -880,6 +918,32 @@ const ModelManagementPage: React.FC = () => {
                           <dt className="font-medium text-gray-700">{t('common.description')}</dt>
                           <dd className="mt-1 whitespace-pre-wrap text-gray-600">{card.description || '-'}</dd>
                         </div>
+
+                        {card.test_result && (
+                          <div className="sm:col-span-2">
+                            <dt className="font-medium text-gray-700">{t('modelManagementPage.test')}</dt>
+                            <dd className="mt-1">
+                              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                                card.test_result.success
+                                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border border-red-200 bg-red-50 text-red-700'
+                              }`}>
+                                {card.test_result.success ? '✓' : '✗'} {card.test_result.message}
+                              </span>
+                            </dd>
+                          </div>
+                        )}
+                        {card.test_error && !card.test_result && (
+                          <div className="sm:col-span-2">
+                            <dt className="font-medium text-gray-700">{t('modelManagementPage.test')}</dt>
+                            <dd className="mt-1">
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                                ✗ {card.test_error}
+                              </span>
+                            </dd>
+                          </div>
+                        )}
+
                       </dl>
 
                       <div className="mt-5 flex items-center justify-end gap-3">
@@ -890,6 +954,14 @@ const ModelManagementPage: React.FC = () => {
                           className="app-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {t('common.delete')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void testConnection(card)}
+                          disabled={card.testing || !card.id}
+                          className="app-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {card.testing ? t('modelManagementPage.testing') : t('modelManagementPage.test')}
                         </button>
                         <button
                           type="button"
@@ -1130,6 +1202,29 @@ const ModelManagementPage: React.FC = () => {
                       </label>
                     </div>
 
+                    {card.test_result && (
+                      <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${
+                        card.test_result.success
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-red-200 bg-red-50 text-red-800'
+                      }`}>
+                        <span className="font-medium">
+                          {card.test_result.success ? '✓' : '✗'} {card.test_result.message}
+                        </span>
+                        {card.test_result.models && card.test_result.models.length > 0 && (
+                          <div className="mt-1.5 text-xs opacity-80">
+                            {card.test_result.models.slice(0, 8).join(', ')}
+                            {card.test_result.models.length > 8 && ` … +${card.test_result.models.length - 8}`}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {card.test_error && !card.test_result && (
+                      <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        ✗ {card.test_error}
+                      </div>
+                    )}
+
                     {card.error && (
                       <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                         {card.error}
@@ -1149,6 +1244,14 @@ const ModelManagementPage: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => void testConnection(card)}
+                          disabled={card.testing || !card.id}
+                          className="app-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {card.testing ? t('modelManagementPage.testing') : t('modelManagementPage.test')}
+                        </button>
                         <button
                           type="button"
                           onClick={() => cancelEditing(card)}
