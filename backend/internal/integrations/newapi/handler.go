@@ -1,6 +1,7 @@
 package newapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +12,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// writeServiceError maps module sentinel errors to proper status codes without
+// touching core response handling.
+func writeServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrRelayNotFound):
+		utils.Error(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrRelayInvalid):
+		utils.Error(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrQuotaExhausted):
+		utils.Error(c, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, ErrUpstreamRejected):
+		utils.Error(c, http.StatusBadGateway, err.Error())
+	default:
+		utils.HandleError(c, err)
+	}
+}
 
 // Handler exposes the New API relay / SSO module over its own route prefix.
 type Handler struct {
@@ -69,7 +87,7 @@ func (h *Handler) createRelay(c *gin.Context) {
 		userID = v.(int)
 	}
 	if err := h.svc.CreateRelayKey(c.Request.Context(), req.Name, req.BaseURL, req.RelayToken, req.DailyLimit, userID); err != nil {
-		utils.HandleError(c, err)
+		writeServiceError(c, err)
 		return
 	}
 	utils.Success(c, http.StatusCreated, "newapi relay registered", gin.H{"name": req.Name})
@@ -119,7 +137,7 @@ func (h *Handler) exchange(c *gin.Context) {
 	}
 	result, err := h.svc.ExchangeSSO(c.Request.Context(), req.RelayName, req.AccessToken, req.Email)
 	if err != nil {
-		utils.HandleError(c, err)
+		writeServiceError(c, err)
 		return
 	}
 	sessionToken, err := utils.GenerateToken(utils.TokenClaims{

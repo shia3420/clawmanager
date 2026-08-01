@@ -20,7 +20,10 @@ ARG GOSUMDB
 ARG GOFLAGS
 ENV GOFLAGS=${GOFLAGS}
 
-RUN apk add --no-cache git
+# Optional Alpine mirror override (default preserves upstream behaviour). Speeds
+# up apk steps on networks where dl-cdn.alpinelinux.org is slow/unreachable.
+ARG ALPINE_REPO_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+RUN if [ "$ALPINE_REPO_MIRROR" != "https://dl-cdn.alpinelinux.org/alpine" ]; then sed -i "s#https://dl-cdn.alpinelinux.org/alpine#$ALPINE_REPO_MIRROR#g" /etc/apk/repositories; fi && apk add --no-cache git
 
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -32,7 +35,8 @@ FROM nginx:1.27-alpine
 
 # nginx-module-njs provides ngx_http_js_module.so, loaded by nginx.conf to run
 # the desktop access-token verification (deployments/nginx/njs/desktop_auth.js).
-RUN apk add --no-cache dumb-init openssl nginx-module-njs
+ARG ALPINE_REPO_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+RUN if [ "$ALPINE_REPO_MIRROR" != "https://dl-cdn.alpinelinux.org/alpine" ]; then sed -i "s#https://dl-cdn.alpinelinux.org/alpine#$ALPINE_REPO_MIRROR#g" /etc/apk/repositories; fi && apk add --no-cache dumb-init openssl nginx-module-njs
 
 WORKDIR /app
 
