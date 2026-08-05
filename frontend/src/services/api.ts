@@ -1,7 +1,8 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { APP_LOGIN_PATH } from '../lib/appBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || `${import.meta.env.BASE_URL || '/'}api/v1`;
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
@@ -71,7 +72,7 @@ api.interceptors.response.use(
     if (!refreshToken) {
       // No refresh token, redirect to login
       localStorage.removeItem('access_token');
-      window.location.href = '/login';
+      window.location.href = APP_LOGIN_PATH;
       return Promise.reject(error);
     }
     
@@ -112,7 +113,7 @@ api.interceptors.response.use(
       refreshSubscribers = [];
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
-      window.location.href = '/login';
+      window.location.href = APP_LOGIN_PATH;
       return Promise.reject(refreshError);
     }
   }

@@ -1377,7 +1377,7 @@ func (h *InstanceHandler) GenerateAccessToken(c *gin.Context) {
 		fmt.Sprintf("instance_access_%d", instance.ID),
 		token.Token,
 		maxAgeSeconds,
-		fmt.Sprintf("/api/v1/instances/%d/proxy", instance.ID),
+		instanceProxyCookiePath(c, instance.ID),
 		"",
 		false,
 		true,
@@ -1534,7 +1534,7 @@ func (h *InstanceHandler) proxyAccessToken(c *gin.Context, id int) (string, bool
 		cookieName,
 		queryToken,
 		int(time.Hour.Seconds()),
-		fmt.Sprintf("/api/v1/instances/%d/proxy", id),
+		instanceProxyCookiePath(c, id),
 		"",
 		false,
 		true,
@@ -2196,7 +2196,7 @@ func setShortExternalAccessCookies(c *gin.Context, instanceID int, code, token s
 		fmt.Sprintf("instance_access_%d", instanceID),
 		token,
 		maxAge,
-		fmt.Sprintf("/api/v1/instances/%d/proxy", instanceID),
+		instanceProxyCookiePath(c, instanceID),
 		"",
 		false,
 		true,
@@ -2325,6 +2325,15 @@ func shortExternalAccessProxyPath(requestPath, code string, instanceID int) stri
 		return internalPrefix + strings.TrimPrefix(path, shortPrefix)
 	}
 	return internalPrefix + "/"
+}
+
+func instanceProxyCookiePath(c *gin.Context, instanceID int) string {
+	externalPrefix := strings.TrimSpace(c.GetHeader("X-Forwarded-Prefix"))
+	internalPath := fmt.Sprintf("/api/v1/instances/%d/proxy", instanceID)
+	if externalPrefix == "" || externalPrefix == "/" {
+		return internalPath
+	}
+	return strings.TrimRight(externalPrefix, "/") + internalPath
 }
 
 func sanitizeDownloadName(name string, fallback ...string) string {

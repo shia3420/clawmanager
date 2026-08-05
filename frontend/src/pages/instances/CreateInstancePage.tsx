@@ -5,6 +5,7 @@ import OpenClawConfigPlanSection, {
   type OpenClawInjectionMode,
 } from "../../components/OpenClawConfigPlanSection";
 import UserLayout from "../../components/UserLayout";
+import { APP_BASE } from "../../lib/appBase";
 import { useAuth } from "../../contexts/AuthContext";
 import { instanceService } from "../../services/instanceService";
 import { skillHubService } from "../../services/skillHubService";
@@ -1082,7 +1083,7 @@ const CreateInstancePage: React.FC = () => {
     if (typeId === "openclaw") {
       return (
         <img
-          src="/openclaw.png"
+          src={`${APP_BASE}openclaw.png`}
           alt="OpenClaw"
           className="h-10 w-10 object-contain"
         />
@@ -1092,7 +1093,7 @@ const CreateInstancePage: React.FC = () => {
     if (typeId === "hermes") {
       return (
         <img
-          src="/hermes.png"
+          src={`${APP_BASE}hermes.png`}
           alt="Hermes"
           className="h-10 w-10 object-contain"
         />

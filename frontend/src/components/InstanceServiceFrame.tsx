@@ -1,6 +1,7 @@
 import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useInstanceDesktopAccess } from "../hooks/useInstanceDesktopAccess";
+import { resolveInstanceEmbedUrl } from "../lib/instanceEmbedUrl";
 import { prepareOpenClawControlUIStorage } from "../lib/openclawControlStorage";
 import type { InstanceAvailability } from "../types/instance";
 
@@ -12,20 +13,7 @@ interface InstanceServiceFrameProps {
 }
 
 function resolveEmbedUrl(url: string | null) {
-  if (!url) {
-    return null;
-  }
-  if (/^https?:\/\//i.test(url)) {
-    return url;
-  }
-  const explicitOrigin = import.meta.env.VITE_BACKEND_ORIGIN as string | undefined;
-  if (explicitOrigin) {
-    return new URL(url, explicitOrigin).toString();
-  }
-  if (window.location.port === "9002" && url.startsWith("/api/")) {
-    return `${window.location.protocol}//${window.location.hostname}:9001${url}`;
-  }
-  return url;
+  return resolveInstanceEmbedUrl(url);
 }
 
 interface PreparedFrame {

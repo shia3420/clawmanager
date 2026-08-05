@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import { APP_BASE } from '../lib/appBase';
 
 interface UserLayoutProps {
   children: React.ReactNode;
@@ -31,7 +32,7 @@ interface UserNavItem {
 }
 
 const shellContainerClass = 'w-full px-3 sm:px-4 lg:px-5 2xl:px-6';
-const appLogoSrc = '/lobster_logo.png';
+const appLogoSrc = `${APP_BASE}lobster_logo.png`;
 
 const UserLayout: React.FC<UserLayoutProps> = ({
   children,

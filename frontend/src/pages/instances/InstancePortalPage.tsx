@@ -10,6 +10,7 @@ import { InstanceShellTerminal } from "../../components/InstanceShellTerminal";
 import UserLayout from "../../components/UserLayout";
 import { WorkspaceFileManager } from "../../components/WorkspaceFileManager";
 import { useInstanceDesktopAccess } from "../../hooks/useInstanceDesktopAccess";
+import { resolveInstanceEmbedUrl } from "../../lib/instanceEmbedUrl";
 import { prepareOpenClawControlUIStorage } from "../../lib/openclawControlStorage";
 import { instanceService } from "../../services/instanceService";
 import type { Instance, InstanceRuntimeDetails } from "../../types/instance";
@@ -106,27 +107,10 @@ const InstancePortalPage: React.FC = () => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const pendingConnectInstanceIdRef = useRef<number | null>(null);
 
-  const resolveEmbedUrl = useCallback((url: string | null) => {
-    if (!url) {
-      return null;
-    }
-
-    if (/^https?:\/\//i.test(url)) {
-      return url;
-    }
-
-    const explicitOrigin = import.meta.env.VITE_BACKEND_ORIGIN as
-      | string
-      | undefined;
-    if (explicitOrigin) {
-      return new URL(url, explicitOrigin).toString();
-    }
-
-    // Keep relative /api/* URLs alone — Vite's dev proxy (vite.config.ts)
-    // forwards them to the in-cluster ClawManager backend. The legacy 9002
-    // -> 9001 rewrite only applied when the backend ran directly on the host.
-    return url;
-  }, []);
+  const resolveEmbedUrl = useCallback(
+    (url: string | null) => resolveInstanceEmbedUrl(url),
+    [],
+  );
 
   const loadInstances = useCallback(async () => {
     try {

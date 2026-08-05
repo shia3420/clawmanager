@@ -1,4 +1,5 @@
 import api from "./api";
+import { APP_BASE } from "../lib/appBase";
 import type {
   Instance,
   InstanceListResponse,
@@ -162,7 +163,7 @@ export const instanceService = {
 
   // Access instance with token
   getAccessUrl: (id: number, token: string): string => {
-    return `/api/v1/instances/${id}/access?token=${token}`;
+    return `${APP_BASE}api/v1/instances/${id}/access?token=${token}`;
   },
 
   getExternalAccess: async (id: number): Promise<ExternalAccessStatusResult> => {

@@ -18,7 +18,7 @@ interface AuthState {
   // Async actions
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
-  exchangeNewApi: (relayName: string, email: string) => Promise<void>;
+  exchangeNewApi: (relayName: string, dashboardToken: string) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<void>;
   clearError: () => void;
@@ -73,10 +73,10 @@ export const useAuthStore = create<AuthState>((set) => {
       }
     },
 
-    exchangeNewApi: async (relayName, email) => {
+    exchangeNewApi: async (relayName, dashboardToken) => {
       set({ isLoading: true, error: null });
       try {
-        const result = await newapiService.exchange(relayName, email);
+        const result = await newapiService.exchange(relayName, dashboardToken);
         localStorage.setItem('access_token', result.session_token);
         localStorage.setItem('refresh_token', '');
         const user = await authService.getCurrentUser();

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AdminLayout from '../../components/AdminLayout';
+import { APP_BASE } from '../../lib/appBase';
 import {
   modelService,
   type DiscoveredProviderModel,
@@ -329,7 +330,7 @@ const VendorTemplateIcon: React.FC<VendorTemplateIconProps> = ({ template, size 
     >
       {!imageFailed ? (
         <img
-          src={meta.src}
+          src={meta.src.startsWith('/') ? `${APP_BASE}${meta.src.replace(/^\/+/, '')}` : meta.src}
           alt=""
           className="h-[72%] w-[72%] object-contain"
           onError={() => setImageFailed(true)}

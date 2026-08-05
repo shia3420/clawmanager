@@ -18,7 +18,9 @@ type Repository interface {
 
 	GetIdentityLink(userID, relayKeyID int) (*IdentityLink, error)
 	GetIdentityLinkByExternal(relayKeyID int, externalID string) (*IdentityLink, error)
+	ListIdentityLinks() ([]IdentityLink, error)
 	ListIdentityLinksByUser(userID int) ([]IdentityLink, error)
+	DeleteIdentityLink(id int) error
 	UpsertIdentityLink(link *IdentityLink) error
 	TouchIdentityLink(id int) error
 
@@ -140,6 +142,35 @@ func (r *relayRepository) ListIdentityLinksByUser(userID int) ([]IdentityLink, e
 		return nil, err
 	}
 	return links, nil
+}
+
+func (r *relayRepository) ListIdentityLinks() ([]IdentityLink, error) {
+	var links []IdentityLink
+	err := r.identityLinks().Find().OrderBy("-id").All(&links)
+	if err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
+// DeleteIdentityLink removes a user-level gateway binding together with the
+// user's trial-quota rows for that relay. It is a purely local operation: the
+// gateway stops resolving the user's per-user credential immediately, and any
+// minted upstream key must be revoked separately in the New API console.
+func (r *relayRepository) DeleteIdentityLink(id int) error {
+	var link IdentityLink
+	err := r.identityLinks().Find(db.Cond{"id": id}).One(&link)
+	if err != nil {
+		if errors.Is(err, db.ErrNoMoreRows) {
+			return ErrIdentityLinkNotFound
+		}
+		return err
+	}
+	if err := r.identityLinks().Find(db.Cond{"id": id}).Delete(); err != nil {
+		return err
+	}
+	_ = r.trialQuotas().Find(db.Cond{"user_id": link.UserID, "relay_key_id": link.RelayKeyID}).Delete()
+	return nil
 }
 
 func (r *relayRepository) UpsertIdentityLink(link *IdentityLink) error {

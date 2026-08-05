@@ -5,8 +5,11 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 
+# Optional Vite base path so the app can be served under a sub-path (e.g.
+# https://api.chase-science.cn/agent/). Defaults to root ("/").
+ARG VITE_BASE_URL=/agent/
 COPY frontend/ ./
-RUN npm run build
+RUN npm run build -- --base=${VITE_BASE_URL}
 
 FROM --platform=$BUILDPLATFORM golang:1.26.1-alpine AS backend-builder
 

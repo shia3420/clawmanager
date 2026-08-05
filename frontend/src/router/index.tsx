@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
+import { APP_BASENAME } from '../lib/appBase';
 
 // Auth Pages
 import LoginPage from '../pages/auth/LoginPage';
@@ -24,6 +25,7 @@ import AdminSecurityScannerConfigPage from '../pages/admin/security/AdminSecurit
 import RiskRulesPage from '../pages/admin/RiskRulesPage';
 import ModelManagementPage from '../pages/admin/ModelManagementPage';
 import NewApiRelaysPage from '../pages/admin/NewApiRelaysPage';
+import NewApiUserLinksPage from '../pages/admin/NewApiUserLinksPage';
 import SystemSettingsPage from '../pages/admin/SystemSettingsPage';
 import RuntimePodsPage from '../pages/admin/RuntimePodsPage';
 import UserSettingsPage from '../pages/settings/UserSettingsPage';
@@ -510,6 +512,14 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/admin/newapi-user-links"
+        element={
+          <AdminRoute>
+            <NewApiUserLinksPage />
+          </AdminRoute>
+        }
+      />
+      <Route
         path="/admin/settings"
         element={
           <AdminRoute>
@@ -529,7 +539,7 @@ function AppRoutes() {
 
 function Router() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={APP_BASENAME}>
       <AuthProvider>
         <AppRoutes />
       </AuthProvider>

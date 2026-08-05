@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Gauge,
   Home,
+  KeyRound,
   LogOut,
   Monitor,
   Network,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useI18n } from '../contexts/I18nContext';
+import { APP_BASE, APP_LOGIN_PATH } from '../lib/appBase';
 import LanguageSwitcher from './LanguageSwitcher';
 import { CATEGORIES } from '../pages/admin/protection/_data';
 
@@ -35,7 +37,7 @@ interface NavItem {
 }
 
 const shellContainerClass = 'w-full px-3 sm:px-4 lg:px-5 2xl:px-6';
-const appLogoSrc = '/lobster_logo.png';
+const appLogoSrc = `${APP_BASE}lobster_logo.png`;
 
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
   const location = useLocation();
@@ -75,9 +77,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
       path: '/admin/ai-gateway',
       label: t('nav.aiGateway'),
       icon: Bot,
-      matchPaths: ['/admin/models', '/admin/ai-audit', '/admin/costs', '/admin/risk-rules', '/admin/session-usage', '/admin/newapi-relays'],
+      matchPaths: ['/admin/models', '/admin/ai-audit', '/admin/costs', '/admin/risk-rules', '/admin/session-usage', '/admin/newapi-relays', '/admin/newapi-user-links'],
     },
     { path: '/admin/newapi-relays', label: t('newapi.navLabel'), icon: Network },
+    { path: '/admin/newapi-user-links', label: t('newapi.userLinksNav'), icon: KeyRound },
     { path: '/admin/settings', label: t('nav.settings'), icon: Settings },
   ];
 
@@ -91,7 +94,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title = '' }) => {
 
   const handleLogout = () => {
     logout();
-    window.location.href = '/login';
+    window.location.href = APP_LOGIN_PATH;
   };
 
   const renderNavItem = (item: NavItem) => {

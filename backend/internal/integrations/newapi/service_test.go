@@ -108,6 +108,24 @@ func (f *fakeRepo) ListIdentityLinksByUser(userID int) ([]IdentityLink, error) {
 	}
 	return out, nil
 }
+func (f *fakeRepo) ListIdentityLinks() ([]IdentityLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]IdentityLink, 0, len(f.links))
+	for _, l := range f.links {
+		out = append(out, *l)
+	}
+	return out, nil
+}
+func (f *fakeRepo) DeleteIdentityLink(id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.links[id]; !ok {
+		return ErrIdentityLinkNotFound
+	}
+	delete(f.links, id)
+	return nil
+}
 func (f *fakeRepo) UpsertIdentityLink(link *IdentityLink) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -186,10 +204,24 @@ func (f *fakeUserStore) GetByUsername(username string) (*models.User, error) {
 	}
 	return nil, nil
 }
+func (f *fakeUserStore) GetByID(id int) (*models.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return nil, nil
+}
 
 type fakeRelay struct {
-	valid bool
-	err   error
+	valid    bool
+	err      error
+	self     *UpstreamUser
+	mintID   int
+	fullKey  string
+	mintName string
 }
 
 func (f *fakeRelay) ValidateCredential(ctx context.Context, baseURL, apiKey string) error {
@@ -200,6 +232,31 @@ func (f *fakeRelay) ValidateCredential(ctx context.Context, baseURL, apiKey stri
 		return ErrUpstreamRejected
 	}
 	return nil
+}
+
+func (f *fakeRelay) FetchSelf(ctx context.Context, baseURL, dashboardToken string) (*UpstreamUser, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.self == nil {
+		return nil, ErrUpstreamRejected
+	}
+	return f.self, nil
+}
+
+func (f *fakeRelay) MintToken(ctx context.Context, baseURL, dashboardToken, name, group string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	f.mintName = name
+	return f.mintID, nil
+}
+
+func (f *fakeRelay) FetchTokenKey(ctx context.Context, baseURL, dashboardToken string, tokenID int) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.fullKey, nil
 }
 
 func testService(t *testing.T, repo *fakeRepo, users *fakeUserStore, relay RelayClient) Service {
@@ -213,6 +270,23 @@ func testService(t *testing.T, repo *fakeRepo, users *fakeUserStore, relay Relay
 		t.Fatalf("NewService: %v", err)
 	}
 	return svc
+}
+
+// registerRelay inserts a relay directly with a known cipher, mirroring what
+// CreateRelayKey does for the admin-facing path.
+func registerRelay(t *testing.T, repo *fakeRepo, name, baseURL string) {
+	t.Helper()
+	cipher, err := newCipher("test-module-encryption-key-32-bytes-long!!")
+	if err != nil {
+		t.Fatalf("newCipher: %v", err)
+	}
+	encRelay, err := cipher.Encrypt("sk-relay-admin")
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if err := repo.CreateRelayKey(&RelayKey{Name: name, BaseURL: baseURL, RelayTokenEnc: encRelay, DefaultDailyLimit: 1000, CreatedBy: 1}); err != nil {
+		t.Fatalf("CreateRelayKey: %v", err)
+	}
 }
 
 // --- tests ---
@@ -248,18 +322,19 @@ func TestNewServiceRequiresKey(t *testing.T) {
 	}
 }
 
-func TestExchangeSSO(t *testing.T) {
+func TestExchangeSSOMintsPersonalKey(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
-	relay := &fakeRelay{valid: true}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
 
-	// register a relay directly (encrypt token with a known cipher)
-	cipher, _ := newCipher("test-module-encryption-key-32-bytes-long!!")
-	encRelay, _ := cipher.Encrypt("sk-relay-admin")
-	repo.CreateRelayKey(&RelayKey{Name: "prod", BaseURL: "https://relay.example.com", RelayTokenEnc: encRelay, DefaultDailyLimit: 1000, CreatedBy: 1})
-
+	relay := &fakeRelay{
+		self:    &UpstreamUser{ID: 7, Username: "alice", Email: "alice@example.com", Group: "vip"},
+		mintID:  42,
+		fullKey: "rawkey1234567890",
+	}
 	svc := testService(t, repo, users, relay)
-	res, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
+
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
 	if err != nil {
 		t.Fatalf("ExchangeSSO: %v", err)
 	}
@@ -269,6 +344,29 @@ func TestExchangeSSO(t *testing.T) {
 	if res.UserID == 0 {
 		t.Fatal("expected a valid user id")
 	}
+	if relay.mintName != "clawmanager-u1" {
+		t.Fatalf("unexpected minted token name: %s", relay.mintName)
+	}
+
+	// the minted personal key must be stored encrypted (never plaintext)
+	links, _ := repo.ListIdentityLinksByUser(res.UserID)
+	if len(links) != 1 {
+		t.Fatalf("expected exactly one identity link, got %d", len(links))
+	}
+	cipher, _ := newCipher("test-module-encryption-key-32-bytes-long!!")
+	dec, err := cipher.Decrypt(links[0].AccessTokenEnc)
+	if err != nil {
+		t.Fatalf("Decrypt stored personal key: %v", err)
+	}
+	if dec != "sk-rawkey1234567890" {
+		t.Fatalf("stored personal key mismatch: got %q", dec)
+	}
+	if links[0].ExternalID != "alice@example.com" {
+		t.Fatalf("external id mismatch: %q", links[0].ExternalID)
+	}
+	if links[0].UpstreamUserID != "7" {
+		t.Fatalf("upstream user id mismatch: %q", links[0].UpstreamUserID)
+	}
 	// the shared relay key must never leak into the provisioned account
 	for _, u := range users.created {
 		if u.PasswordHash == "sk-relay-admin" || u.Email == "sk-relay-admin" {
@@ -276,8 +374,8 @@ func TestExchangeSSO(t *testing.T) {
 		}
 	}
 
-	// subsequent exchange with the same external id must reuse the account
-	res2, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
+	// subsequent exchange with the same upstream identity must reuse the account
+	res2, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
 	if err != nil {
 		t.Fatalf("ExchangeSSO second time: %v", err)
 	}
@@ -289,12 +387,12 @@ func TestExchangeSSO(t *testing.T) {
 	}
 }
 
-func TestExchangeSSORequiresExternalID(t *testing.T) {
+func TestExchangeSSORequiresToken(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
 	svc := testService(t, repo, users, &fakeRelay{})
 	if _, err := svc.ExchangeSSO(context.Background(), "prod", ""); !errors.Is(err, ErrRelayInvalid) {
-		t.Fatalf("expected ErrRelayInvalid for empty external id, got %v", err)
+		t.Fatalf("expected ErrRelayInvalid for empty dashboard token, got %v", err)
 	}
 }
 
@@ -302,8 +400,18 @@ func TestExchangeSSOUnknownRelay(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
 	svc := testService(t, repo, users, &fakeRelay{})
-	if _, err := svc.ExchangeSSO(context.Background(), "missing", "user@example.com"); !errors.Is(err, ErrRelayNotFound) {
+	if _, err := svc.ExchangeSSO(context.Background(), "missing", "some-dashboard-jwt"); !errors.Is(err, ErrRelayNotFound) {
 		t.Fatalf("expected ErrRelayNotFound, got %v", err)
+	}
+}
+
+func TestExchangeSSORejectsBadToken(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
+	svc := testService(t, repo, users, &fakeRelay{})
+	if _, err := svc.ExchangeSSO(context.Background(), "prod", "bad-jwt"); !errors.Is(err, ErrUpstreamRejected) {
+		t.Fatalf("expected ErrUpstreamRejected for invalid dashboard token, got %v", err)
 	}
 }
 
@@ -326,35 +434,42 @@ func TestCreateRelayKeyValidatesCredential(t *testing.T) {
 	}
 }
 
-func TestResolveCredentialAndQuota(t *testing.T) {
+func TestResolveCredentialUsesPersonalKey(t *testing.T) {
 	repo := newFakeRepo()
 	users := &fakeUserStore{users: map[string]*models.User{}}
-	relay := &fakeRelay{valid: true}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
 
-	cipher, _ := newCipher("test-module-encryption-key-32-bytes-long!!")
-	encRelay, _ := cipher.Encrypt("sk-relay-admin")
-	repo.CreateRelayKey(&RelayKey{Name: "prod", BaseURL: "https://relay.example.com", RelayTokenEnc: encRelay, DefaultDailyLimit: 2, CreatedBy: 1})
-
+	relay := &fakeRelay{
+		self:    &UpstreamUser{ID: 7, Username: "alice", Email: "alice@example.com", Group: "default"},
+		mintID:  42,
+		fullKey: "rawkey1234567890",
+	}
 	svc := testService(t, repo, users, relay)
-	res, err := svc.ExchangeSSO(context.Background(), "prod", "user@example.com")
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
 	if err != nil {
 		t.Fatalf("ExchangeSSO: %v", err)
 	}
 
-	// first two resolutions succeed and count against the daily breaker
-	ov1, err := svc.ResolveCredential(context.Background(), res.UserID)
+	// the gateway must receive the user's own key, not the shared relay key
+	ov, err := svc.ResolveCredential(context.Background(), res.UserID)
 	if err != nil {
-		t.Fatalf("ResolveCredential #1: %v", err)
+		t.Fatalf("ResolveCredential: %v", err)
 	}
-	if ov1 == nil || ov1.BaseURL != "https://relay.example.com/v1" || ov1.APIKey != "sk-relay-admin" {
-		t.Fatalf("unexpected override: %+v", ov1)
+	if ov == nil {
+		t.Fatal("expected a credential override")
 	}
-	if _, err := svc.ResolveCredential(context.Background(), res.UserID); err != nil {
-		t.Fatalf("ResolveCredential #2: %v", err)
+	if ov.BaseURL != "https://relay.example.com/v1" {
+		t.Fatalf("unexpected base url: %s", ov.BaseURL)
 	}
-	// third resolution must trip the breaker
-	if _, err := svc.ResolveCredential(context.Background(), res.UserID); !errors.Is(err, ErrQuotaExhausted) {
-		t.Fatalf("expected ErrQuotaExhausted, got %v", err)
+	if ov.APIKey != "sk-rawkey1234567890" {
+		t.Fatalf("expected the user's personal key, got %q", ov.APIKey)
+	}
+
+	// repeated resolution is always allowed (no shared-key breaker)
+	for i := 0; i < 3; i++ {
+		if _, err := svc.ResolveCredential(context.Background(), res.UserID); err != nil {
+			t.Fatalf("ResolveCredential #%d: %v", i, err)
+		}
 	}
 
 	// a user with no link falls back to model credentials (nil, nil)
@@ -364,4 +479,129 @@ func TestResolveCredentialAndQuota(t *testing.T) {
 	}
 }
 
+func TestResolveCredentialSkipsBrokenLink(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
+
+	relay := &fakeRelay{
+		self:    &UpstreamUser{ID: 7, Username: "alice", Email: "alice@example.com", Group: "default"},
+		mintID:  42,
+		fullKey: "rawkey1234567890",
+	}
+	svc := testService(t, repo, users, relay)
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
+	if err != nil {
+		t.Fatalf("ExchangeSSO: %v", err)
+	}
+
+	// corrupt the stored personal key so decryption fails
+	links, _ := repo.ListIdentityLinksByUser(res.UserID)
+	links[0].AccessTokenEnc = "not-a-ciphertext"
+	_ = repo.UpsertIdentityLink(&links[0])
+
+	ov, err := svc.ResolveCredential(context.Background(), res.UserID)
+	if err != nil {
+		t.Fatalf("ResolveCredential with broken link: %v", err)
+	}
+	if ov != nil {
+		t.Fatalf("expected fallback (nil) for undecryptable link, got %+v", ov)
+	}
+}
+
 var _ integration.CredentialResolver = (Service)(nil)
+
+func TestListIdentityLinksJoinsUserAndUsage(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
+
+	relay := &fakeRelay{
+		self:    &UpstreamUser{ID: 7, Username: "alice", Email: "alice@example.com", Group: "vip"},
+		mintID:  42,
+		fullKey: "rawkey1234567890",
+	}
+	svc := testService(t, repo, users, relay)
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
+	if err != nil {
+		t.Fatalf("ExchangeSSO: %v", err)
+	}
+
+	key, _ := repo.GetRelayKeyByName("prod")
+	day := time.Now().Format("2006-01-02")
+	_ = repo.UpsertTrialQuota(&TrialQuota{UserID: res.UserID, RelayKeyID: key.ID, DayKey: day, UsedTokens: 123})
+
+	views, err := svc.ListIdentityLinks()
+	if err != nil {
+		t.Fatalf("ListIdentityLinks: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected one view, got %d", len(views))
+	}
+	v := views[0]
+	if v.Username == "" {
+		t.Fatal("expected the linked user's username to be joined")
+	}
+	if v.RelayName != "prod" || v.RelayBaseURL != "https://relay.example.com" {
+		t.Fatalf("unexpected relay info: %+v", v)
+	}
+	if v.TokenName != "clawmanager-u1" {
+		t.Fatalf("unexpected token name: %s", v.TokenName)
+	}
+	if !v.HasCredential {
+		t.Fatal("expected credential presence to be reported")
+	}
+	if v.TodayUsed != 123 {
+		t.Fatalf("expected today usage 123, got %d", v.TodayUsed)
+	}
+	if v.TodayLimit == 0 {
+		t.Fatal("expected the relay daily limit to be joined")
+	}
+}
+
+func TestUnlinkIdentityLink(t *testing.T) {
+	repo := newFakeRepo()
+	users := &fakeUserStore{users: map[string]*models.User{}}
+	registerRelay(t, repo, "prod", "https://relay.example.com")
+
+	relay := &fakeRelay{
+		self:    &UpstreamUser{ID: 7, Username: "alice", Email: "alice@example.com", Group: "vip"},
+		mintID:  42,
+		fullKey: "rawkey1234567890",
+	}
+	svc := testService(t, repo, users, relay)
+	res, err := svc.ExchangeSSO(context.Background(), "prod", "some-dashboard-jwt")
+	if err != nil {
+		t.Fatalf("ExchangeSSO: %v", err)
+	}
+
+	links, _ := repo.ListIdentityLinksByUser(res.UserID)
+	if len(links) != 1 {
+		t.Fatalf("expected one link before unlink, got %d", len(links))
+	}
+	linkID := links[0].ID
+
+	// resolving still works while linked
+	if ov, err := svc.ResolveCredential(context.Background(), res.UserID); err != nil || ov == nil {
+		t.Fatalf("expected credential before unlink, got (%+v, %v)", ov, err)
+	}
+
+	if err := svc.UnlinkIdentityLink(linkID); err != nil {
+		t.Fatalf("UnlinkIdentityLink: %v", err)
+	}
+	after, _ := repo.ListIdentityLinksByUser(res.UserID)
+	if len(after) != 0 {
+		t.Fatalf("expected link to be removed, got %d links", len(after))
+	}
+
+	// unlinking an unknown id must be a sentinel error
+	if err := svc.UnlinkIdentityLink(linkID); !errors.Is(err, ErrIdentityLinkNotFound) {
+		t.Fatalf("expected ErrIdentityLinkNotFound, got %v", err)
+	}
+
+	// the user falls back to model credentials after unlink
+	ov, err := svc.ResolveCredential(context.Background(), res.UserID)
+	if err != nil || ov != nil {
+		t.Fatalf("expected (nil, nil) after unlink, got (%+v, %v)", ov, err)
+	}
+}

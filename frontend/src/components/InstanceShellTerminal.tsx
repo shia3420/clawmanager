@@ -4,6 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "../contexts/I18nContext";
+import { APP_BASE } from "../lib/appBase";
 
 interface InstanceShellTerminalProps {
   instanceId: number;
@@ -52,7 +53,7 @@ export function InstanceShellTerminal({
       | string
       | undefined;
     const base = explicitOrigin || window.location.origin;
-    const url = new URL(`/api/v1/instances/${instanceId}/shell`, base);
+    const url = new URL(`${APP_BASE}api/v1/instances/${instanceId}/shell`, base);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     if (!explicitOrigin && window.location.port === "9002") {
       url.port = "9001";

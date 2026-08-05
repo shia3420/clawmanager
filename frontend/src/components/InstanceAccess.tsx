@@ -4,6 +4,7 @@ import { OpenClawDesktopOverlay } from "./OpenClawDesktopOverlay";
 import { InstanceShellTerminal } from "./InstanceShellTerminal";
 import { useI18n } from "../contexts/I18nContext";
 import { useInstanceDesktopAccess } from "../hooks/useInstanceDesktopAccess";
+import { resolveInstanceEmbedUrl } from "../lib/instanceEmbedUrl";
 
 interface InstanceAccessProps {
   instanceId: number;
@@ -84,29 +85,10 @@ function DesktopInstanceAccess({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  const resolveEmbedUrl = useCallback((url: string | null) => {
-    if (!url) {
-      return null;
-    }
-
-    if (/^https?:\/\//i.test(url)) {
-      return url;
-    }
-
-    const explicitOrigin = import.meta.env.VITE_BACKEND_ORIGIN as
-      | string
-      | undefined;
-    if (explicitOrigin) {
-      return new URL(url, explicitOrigin).toString();
-    }
-
-    // Keep relative /api/* URLs alone — Vite's dev proxy (vite.config.ts)
-    // forwards them to the in-cluster ClawManager backend. The legacy branch
-    // that rewrote port 9002 -> 9001 only applied when the backend ran
-    // directly on the host on 9001; with the in-cluster deployment that
-    // would point at nothing.
-    return url;
-  }, []);
+  const resolveEmbedUrl = useCallback(
+    (url: string | null) => resolveInstanceEmbedUrl(url),
+    [],
+  );
 
   const {
     embedUrl,

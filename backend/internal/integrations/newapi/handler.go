@@ -17,12 +17,10 @@ import (
 // touching core response handling.
 func writeServiceError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrRelayNotFound):
+	case errors.Is(err, ErrRelayNotFound), errors.Is(err, ErrIdentityLinkNotFound):
 		utils.Error(c, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrRelayInvalid):
 		utils.Error(c, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrQuotaExhausted):
-		utils.Error(c, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, ErrUpstreamRejected):
 		utils.Error(c, http.StatusBadGateway, err.Error())
 	default:
@@ -54,6 +52,8 @@ func (h *Handler) RegisterRoutes(api *gin.RouterGroup, userRepo repository.UserR
 		admin.POST("/relays", h.createRelay)
 		admin.GET("/relays", h.listRelays)
 		admin.DELETE("/relays/:id", h.deleteRelay)
+		admin.GET("/identity-links", h.listIdentityLinks)
+		admin.POST("/identity-links/:id/unlink", h.unlinkIdentityLink)
 	}
 
 	sso := group.Group("/sso")
@@ -115,9 +115,33 @@ func (h *Handler) deleteRelay(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "newapi relay deleted", nil)
 }
 
+func (h *Handler) listIdentityLinks(c *gin.Context) {
+	links, err := h.svc.ListIdentityLinks()
+	if err != nil {
+		utils.HandleError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "identity links retrieved", gin.H{
+		"items": links,
+	})
+}
+
+func (h *Handler) unlinkIdentityLink(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		utils.Error(c, http.StatusBadRequest, "identity link id is invalid")
+		return
+	}
+	if err := h.svc.UnlinkIdentityLink(id); err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "identity link unlinked", nil)
+}
+
 type exchangeRequest struct {
-	RelayName string `json:"relay_name"`
-	Email     string `json:"email"`
+	RelayName      string `json:"relay_name"`
+	DashboardToken string `json:"dashboard_token"`
 }
 
 type exchangeResponse struct {
@@ -134,7 +158,7 @@ func (h *Handler) exchange(c *gin.Context) {
 		utils.ValidationError(c, err)
 		return
 	}
-	result, err := h.svc.ExchangeSSO(c.Request.Context(), req.RelayName, req.Email)
+	result, err := h.svc.ExchangeSSO(c.Request.Context(), req.RelayName, req.DashboardToken)
 	if err != nil {
 		writeServiceError(c, err)
 		return

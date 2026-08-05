@@ -18,6 +18,25 @@ export interface NewApiExchangeResult {
   created_user: boolean;
 }
 
+export interface NewApiIdentityLink {
+  id: number;
+  user_id: number;
+  username: string;
+  email: string;
+  role: string;
+  relay_key_id: number;
+  relay_name: string;
+  relay_base_url: string;
+  external_id: string;
+  upstream_user_id: string;
+  token_name: string;
+  has_credential: boolean;
+  today_used: number;
+  today_limit: number;
+  created_at: string;
+  last_used_at?: string;
+}
+
 export const newapiService = {
   listRelays: async (): Promise<NewApiRelay[]> => {
     const response = await api.get('/integrations/newapi/admin/relays');
@@ -37,11 +56,20 @@ export const newapiService = {
     await api.delete(`/integrations/newapi/admin/relays/${id}`);
   },
 
-  exchange: async (relayName: string, email: string): Promise<NewApiExchangeResult> => {
+  exchange: async (relayName: string, dashboardToken: string): Promise<NewApiExchangeResult> => {
     const response = await api.post('/integrations/newapi/sso/exchange', {
       relay_name: relayName,
-      email,
+      dashboard_token: dashboardToken,
     });
     return response.data.data;
+  },
+
+  listIdentityLinks: async (): Promise<NewApiIdentityLink[]> => {
+    const response = await api.get('/integrations/newapi/admin/identity-links');
+    return response.data.data?.items ?? [];
+  },
+
+  unlinkIdentityLink: async (id: number): Promise<void> => {
+    await api.post(`/integrations/newapi/admin/identity-links/${id}/unlink`);
   },
 };

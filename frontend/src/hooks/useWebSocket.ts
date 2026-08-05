@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { APP_BASE } from '../lib/appBase';
 
 interface WebSocketMessage {
   type: string;
@@ -52,7 +53,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     if (topic !== "user") {
       params.set("topic", topic);
     }
-    const wsUrl = `${wsProtocol}//${wsHost}/api/v1/ws?${params.toString()}`;
+    const wsUrl = `${wsProtocol}//${wsHost}${APP_BASE}api/v1/ws?${params.toString()}`;
 
     try {
       ws.current = new WebSocket(wsUrl);
