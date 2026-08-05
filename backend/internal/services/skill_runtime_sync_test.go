@@ -323,6 +323,144 @@ func TestSyncAgentSkillsReusesUploadedSkillOnWorkspaceScan(t *testing.T) {
 	}
 }
 
+func TestSyncAgentSkillsReconcilesDiscoveredSkillToExistingContentHash(t *testing.T) {
+	reportedHash := "55836cb933c884d1964443421aad714a"
+	legacyHash := "34020e1053ea1ae5aced654c1ef7aff1"
+	versionID := 20
+	stub := &provenanceCaptureRepoStub{
+		capturingSkillRepoStub: capturingSkillRepoStub{
+			skillRepoStub: skillRepoStub{
+				skills: map[int]*models.Skill{
+					20: {
+						ID: 20, UserID: 7, SkillKey: "finproc-tender-monitor", Name: "finproc-tender-monitor",
+						SourceType: skillSourceDiscovered, Status: skillStatusActive,
+						Visibility: skillVisibilityPrivate, CurrentVersionID: &versionID,
+					},
+				},
+				blobs: map[int]*models.SkillBlob{
+					75: {ID: 75, ContentHash: legacyHash, ObjectKey: "discovered/legacy.zip", ScanStatus: "completed"},
+					76: {ID: 76, ContentHash: reportedHash, ObjectKey: "hub/finproc.zip", ScanStatus: "completed"},
+				},
+				versions: map[int]*models.SkillVersion{
+					20: {ID: 20, SkillID: 20, BlobID: 75, VersionNo: 1},
+				},
+				instanceSkills: []models.InstanceSkill{},
+			},
+		},
+	}
+	instRepo := &importTestInstanceRepo{instances: map[int]*models.Instance{
+		1: {ID: 1, UserID: 7, Type: RuntimeTypeHermes, InstanceMode: InstanceModeLite, RuntimeType: RuntimeBackendGateway},
+	}}
+	svc := &skillService{repo: stub, instanceRepo: instRepo, commandService: &noopInstanceCommandService{}}
+	err := svc.SyncAgentSkills(1, AgentSkillInventoryReportRequest{
+		Mode: "full",
+		Skills: []AgentSkillRecord{{
+			Identifier:  "finproc-tender-monitor",
+			ContentMD5:  reportedHash,
+			Source:      "discovered_in_instance",
+			InstallPath: "home/.hermes/skills/finproc-tender-monitor",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SyncAgentSkills() error = %v", err)
+	}
+	blob75 := stub.blobs[75]
+	if blob75 == nil || blob75.ContentHash != legacyHash {
+		t.Fatalf("blob 75 content hash = %q, want unchanged %q (no duplicate-hash mutation)", blob75.ContentHash, legacyHash)
+	}
+	if stub.versions[20].BlobID != 75 {
+		t.Fatalf("version 20 BlobID = %d, want 75 (existing version must not be repointed away)", stub.versions[20].BlobID)
+	}
+	if len(stub.createdVersions) != 1 {
+		t.Fatalf("created %d versions, want 1 new version for reported content", len(stub.createdVersions))
+	}
+	created := stub.createdVersions[0]
+	if created.SkillID != 20 || created.BlobID != 76 {
+		t.Fatalf("created version = skill %d blob %d, want skill 20 blob 76", created.SkillID, created.BlobID)
+	}
+	if stub.skills[20].CurrentVersionID == nil || *stub.skills[20].CurrentVersionID != created.ID {
+		t.Fatalf("skill 20 CurrentVersionID = %v, want new version %d", stub.skills[20].CurrentVersionID, created.ID)
+	}
+	if len(stub.createdSkills) != 0 {
+		t.Fatalf("created %d discovered skills, want 0", len(stub.createdSkills))
+	}
+	if len(stub.upserted) != 1 || stub.upserted[0].SkillID != 20 {
+		t.Fatalf("upserted = %#v, want instance skill for skill 20", stub.upserted)
+	}
+	if stub.upserted[0].SkillVersionID == nil || *stub.upserted[0].SkillVersionID != created.ID {
+		t.Fatalf("SkillVersionID = %v, want new version %d", stub.upserted[0].SkillVersionID, created.ID)
+	}
+	if stub.upserted[0].ObservedHash == nil || *stub.upserted[0].ObservedHash != reportedHash {
+		t.Fatalf("ObservedHash = %v, want %q", stub.upserted[0].ObservedHash, reportedHash)
+	}
+}
+
+func TestSyncAgentSkillsStaleInjectedReportKeepsCurrentVersionAndExistingVersion(t *testing.T) {
+	reportedHash := "55836cb933c884d1964443421aad714a"
+	currentHash := "a05fc8e284e0967d1213d25bdc452b8d"
+	version81 := 81
+	stub := &provenanceCaptureRepoStub{
+		capturingSkillRepoStub: capturingSkillRepoStub{
+			skillRepoStub: skillRepoStub{
+				skills: map[int]*models.Skill{
+					75: {
+						ID: 75, UserID: 1, SkillKey: "finproc-tender-monitor", Name: "finproc-tender-monitor",
+						SourceType: skillSourceUploaded, Status: skillStatusActive,
+						Visibility: skillVisibilityPublic, CurrentVersionID: &version81,
+					},
+				},
+				blobs: map[int]*models.SkillBlob{
+					76: {ID: 76, ContentHash: reportedHash, ObjectKey: "hub/finproc-v2.zip", ScanStatus: "completed"},
+					77: {ID: 77, ContentHash: currentHash, ObjectKey: "hub/finproc-v3.zip", ScanStatus: "completed"},
+				},
+				versions: map[int]*models.SkillVersion{
+					80: {ID: 80, SkillID: 75, BlobID: 76, VersionNo: 2},
+					81: {ID: 81, SkillID: 75, BlobID: 77, VersionNo: 3},
+				},
+				instanceSkills: []models.InstanceSkill{},
+			},
+		},
+	}
+	instRepo := &importTestInstanceRepo{instances: map[int]*models.Instance{
+		1: {ID: 1, UserID: 1, Type: RuntimeTypeHermes, InstanceMode: InstanceModeLite, RuntimeType: RuntimeBackendGateway},
+	}}
+	svc := &skillService{repo: stub, instanceRepo: instRepo, commandService: &noopInstanceCommandService{}}
+	err := svc.SyncAgentSkills(1, AgentSkillInventoryReportRequest{
+		Mode: "full",
+		Skills: []AgentSkillRecord{{
+			SkillID:     "skill_75",
+			Identifier:  "finproc-tender-monitor",
+			ContentMD5:  reportedHash,
+			Source:      "injected_by_clawmanager",
+			InstallPath: "home/.hermes/skills/finproc-tender-monitor",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SyncAgentSkills() error = %v (duplicate version key must not trigger)", err)
+	}
+	if stub.versions[81].BlobID != 77 {
+		t.Fatalf("current version 81 BlobID = %d, want untouched 77 (published v3 must not be repointed to stale report)", stub.versions[81].BlobID)
+	}
+	if stub.versions[80].BlobID != 76 {
+		t.Fatalf("version 80 BlobID = %d, want 76 (existing version must be reused, not mutated)", stub.versions[80].BlobID)
+	}
+	if len(stub.createdVersions) != 0 {
+		t.Fatalf("created %d versions, want 0 (no duplicate version for skill 75 + blob 76)", len(stub.createdVersions))
+	}
+	if len(stub.upserted) != 1 || stub.upserted[0].SkillID != 75 {
+		t.Fatalf("upserted = %#v, want instance skill for skill 75", stub.upserted)
+	}
+	if stub.upserted[0].SkillVersionID == nil || *stub.upserted[0].SkillVersionID != 80 {
+		t.Fatalf("SkillVersionID = %v, want 80 (the existing version matching the stale reported content)", stub.upserted[0].SkillVersionID)
+	}
+	if stub.upserted[0].ObservedHash == nil || *stub.upserted[0].ObservedHash != reportedHash {
+		t.Fatalf("ObservedHash = %v, want %q", stub.upserted[0].ObservedHash, reportedHash)
+	}
+	if stub.skills[75].CurrentVersionID == nil || *stub.skills[75].CurrentVersionID != 81 {
+		t.Fatalf("skill 75 CurrentVersionID = %v, want 81 (uploaded skill current version must stay on published v3)", stub.skills[75].CurrentVersionID)
+	}
+}
+
 type recordingSkillResyncAgentClient struct {
 	fakeRuntimeAgentClient
 	calls []struct {

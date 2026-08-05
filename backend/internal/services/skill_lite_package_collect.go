@@ -182,14 +182,24 @@ func (s *skillService) reconcileLiteDiscoveredBlob(skill *models.Skill, contentH
 	if blob == nil {
 		return nil, version, nil
 	}
-	if !strings.EqualFold(strings.TrimSpace(blob.ContentHash), contentHash) {
-		blob.ContentHash = contentHash
-		blob.ArchiveHash = contentHash
-		if err := s.repo.UpdateBlob(blob); err != nil {
-			return nil, version, err
-		}
+	if strings.EqualFold(strings.TrimSpace(blob.ContentHash), contentHash) {
+		return blob, version, nil
 	}
-	return blob, version, nil
+	existingBlob, err := s.repo.GetBlobByContentHash(contentHash)
+	if err != nil {
+		return nil, version, err
+	}
+	if existingBlob != nil && existingBlob.ID != blob.ID {
+		existingVersion, verErr := s.repo.GetVersionBySkillAndBlob(skill.ID, existingBlob.ID)
+		if verErr != nil {
+			return existingBlob, nil, verErr
+		}
+		if existingVersion != nil {
+			return existingBlob, existingVersion, nil
+		}
+		return existingBlob, nil, nil
+	}
+	return nil, nil, nil
 }
 
 func liteInventoryUsesWorkspaceHash(instance *models.Instance) bool {

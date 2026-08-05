@@ -654,6 +654,7 @@ func TestSyncAgentSkillsCreatesDiscoveredSkillWithPrivateVisibility(t *testing.T
 type capturingSkillRepoStub struct {
 	skillRepoStub
 	createdSkills         []*models.Skill
+	createdVersions       []*models.SkillVersion
 	nextSkillID           int
 	markMissingCalls      int
 	lastMarkMissingActive []int
@@ -691,6 +692,7 @@ func (s *capturingSkillRepoStub) CreateVersion(version *models.SkillVersion) err
 	version.ID = s.nextSkillID
 	stored := *version
 	s.versions[version.ID] = &stored
+	s.createdVersions = append(s.createdVersions, &stored)
 	return nil
 }
 
