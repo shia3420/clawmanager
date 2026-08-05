@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,7 @@ func TestRuntimeAgentClientCreateGateway(t *testing.T) {
 		UserID:        8,
 		AgentType:     "openclaw",
 		WorkspacePath: "/workspaces/openclaw/user-8/instance-7",
+		GatewayPort:   20015,
 		PortRange:     RuntimeAgentPortRange{Start: RuntimeGatewayPortStart, End: RuntimeGatewayPortEnd},
 		UID:           200007,
 		GID:           200007,
@@ -51,7 +53,7 @@ func TestRuntimeAgentClientCreateGateway(t *testing.T) {
 	if gotToken != "secret" {
 		t.Fatalf("unexpected token %q", gotToken)
 	}
-	if gotReq.InstanceID != 7 || gotReq.PortRange.Start != 20000 {
+	if gotReq.InstanceID != 7 || gotReq.GatewayPort != 20015 || gotReq.PortRange.Start != 20000 {
 		t.Fatalf("unexpected request %#v", gotReq)
 	}
 	if resp.GatewayID != "gw-7-3" || resp.Port != 20017 {
@@ -226,6 +228,9 @@ func TestRuntimeAgentClientConflict(t *testing.T) {
 	_, err := client.CreateGateway(context.Background(), server.URL, RuntimeAgentCreateGatewayRequest{})
 	if err == nil || !strings.Contains(err.Error(), "runtime agent conflict") || !strings.Contains(err.Error(), "no free port") {
 		t.Fatalf("unexpected error %v", err)
+	}
+	if !errors.Is(err, ErrRuntimeAgentConflict) {
+		t.Fatalf("error %v does not wrap ErrRuntimeAgentConflict", err)
 	}
 }
 

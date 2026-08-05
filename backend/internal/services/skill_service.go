@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"clawreef/internal/models"
 	"clawreef/internal/repository"
@@ -107,19 +109,21 @@ type SkillVersionPayload struct {
 }
 
 type InstanceSkillPayload struct {
-	ID             int           `json:"id"`
-	InstanceID     int           `json:"instance_id"`
-	SkillID        int           `json:"skill_id"`
-	SkillVersionID *int          `json:"skill_version_id,omitempty"`
-	SourceType     string        `json:"source_type"`
-	InstallPath    *string       `json:"install_path,omitempty"`
-	WorkspaceDir   *string       `json:"workspace_dir,omitempty"`
-	ObservedHash   *string       `json:"observed_hash,omitempty"`
-	ContentMD5     *string       `json:"content_md5,omitempty"`
-	Status         string        `json:"status"`
-	LastSeenAt     *time.Time    `json:"last_seen_at,omitempty"`
-	RemovedAt      *time.Time    `json:"removed_at,omitempty"`
-	Skill          *SkillPayload `json:"skill,omitempty"`
+	ID                   int           `json:"id"`
+	InstanceID           int           `json:"instance_id"`
+	SkillID              int           `json:"skill_id"`
+	SkillVersionID       *int          `json:"skill_version_id,omitempty"`
+	SourceType           string        `json:"source_type"`
+	InstallPath          *string       `json:"install_path,omitempty"`
+	WorkspaceDir         *string       `json:"workspace_dir,omitempty"`
+	ObservedHash         *string       `json:"observed_hash,omitempty"`
+	ContentMD5           *string       `json:"content_md5,omitempty"`
+	InstalledContentHash *string       `json:"installed_content_hash,omitempty"`
+	ContentDiverged      bool          `json:"content_diverged"`
+	Status               string        `json:"status"`
+	LastSeenAt           *time.Time    `json:"last_seen_at,omitempty"`
+	RemovedAt            *time.Time    `json:"removed_at,omitempty"`
+	Skill                *SkillPayload `json:"skill,omitempty"`
 }
 
 type SkillScanResultPayload struct {
@@ -204,6 +208,11 @@ type SkillService interface {
 	BatchInstallHubSkill(actorUserID int, actorRole string, skillID int, instanceIDs []int) []BatchInstallHubSkillResult
 	PublishFromInstance(actorUserID int, actorRole string, instanceID, skillID int, tagIDs []int) (*SkillPayload, error)
 	ImportInstanceSkillToLibrary(actorUserID int, actorRole string, instanceID, skillID int) (*SkillPayload, error)
+	RestoreInstanceSkill(actorUserID int, actorRole string, instanceID, skillID int) (*InstanceSkillPayload, error)
+	SaveBackInstanceSkillToLibrary(actorUserID int, actorRole string, instanceID, skillID int) (*SkillPayload, error)
+	SaveForeignInstanceSkillToMyLibrary(actorUserID int, actorRole string, instanceID, skillID int) (*SkillPayload, error)
+	PublishSkillAsNew(actorUserID int, actorRole string, skillID int, tagIDs []int) (*SkillPayload, error)
+	GetSkillMarkdown(actorUserID int, actorRole string, skillID int) (string, error)
 	RetrySkillPackageCollection(actorUserID int, actorRole string, instanceID, skillID int) error
 	ListAttachableSkills(actorUserID int, actorRole string) ([]SkillPayload, error)
 	ImportHubArchive(ctx context.Context, userID int, fileHeader *multipart.FileHeader) ([]SkillPayload, error)
@@ -481,9 +490,14 @@ func (s *skillService) ListInstanceSkills(instanceID int) ([]InstanceSkillPayloa
 		if isRemovedInstanceSkill(&item) {
 			continue
 		}
+		installedHash, err := s.installedContentHashForInstanceSkill(&item)
+		if err != nil {
+			return nil, err
+		}
 		payload := InstanceSkillPayload{
 			ID: item.ID, InstanceID: item.InstanceID, SkillID: item.SkillID, SkillVersionID: item.SkillVersionID,
 			SourceType: item.SourceType, InstallPath: item.InstallPath, WorkspaceDir: item.WorkspaceDir, ObservedHash: item.ObservedHash,
+			InstalledContentHash: optionalString(installedHash), ContentDiverged: isInstanceSkillContentDiverged(item.ObservedHash, installedHash),
 			Status: item.Status, LastSeenAt: item.LastSeenAt, RemovedAt: item.RemovedAt,
 		}
 		skill, err := s.repo.GetSkillByID(item.SkillID)
@@ -1870,20 +1884,27 @@ func flattenSingleTopLevelDir(files map[string][]byte) map[string][]byte {
 	return flattened
 }
 
+const skillKeyMaxRunes = 120
+
 func sanitizeSkillKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	var builder strings.Builder
 	for _, r := range value {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			builder.WriteRune(r)
 		case r == '-' || r == '_' || r == ' ' || r == '.':
 			builder.WriteRune('-')
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			builder.WriteRune(r)
 		}
 	}
 	result := strings.Trim(builder.String(), "-")
 	for strings.Contains(result, "--") {
 		result = strings.ReplaceAll(result, "--", "-")
+	}
+	if utf8.RuneCountInString(result) > skillKeyMaxRunes {
+		runes := []rune(result)
+		result = string(runes[:skillKeyMaxRunes])
+		result = strings.Trim(result, "-")
 	}
 	return result
 }

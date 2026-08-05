@@ -67,6 +67,7 @@ export interface InstanceExternalAccess {
   instance_id: number;
   enabled: boolean;
   auth_mode: "share_link" | "password";
+  workspace_access: "none" | "read" | "write";
   password_hint?: string;
   expires_at?: string;
   created_by?: number;
@@ -82,6 +83,7 @@ export interface ExternalAccessRequest {
   expires_mode?: ExternalAccessExpirationMode;
   expires_preset?: ExternalAccessExpirationPreset;
   expires_at?: string;
+  workspace_access?: "none" | "read" | "write";
 }
 
 export interface ExternalAccessStatusResult {
@@ -239,6 +241,15 @@ export interface UpdateInstanceRequest {
   name?: string;
   description?: string;
   desktop_stream_profile?: DesktopStreamProfile;
+}
+
+export interface RestartInstanceRequest {
+  environment_overrides?: Record<string, string>;
+  environment_override_removals?: string[];
+}
+
+export interface InstanceEnvironmentOverrides {
+  names: string[];
 }
 
 export type DesktopStreamProfile = "low" | "standard" | "high";

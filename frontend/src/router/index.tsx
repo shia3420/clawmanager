@@ -44,6 +44,7 @@ import CategoryPage from '../pages/admin/protection/CategoryPage';
 import AuditPage from '../pages/admin/protection/scenarios/AuditPage';
 import ApprovalPage from '../pages/admin/protection/scenarios/ApprovalPage';
 import OutboundPage from '../pages/admin/protection/scenarios/OutboundPage';
+import EgressPrivateExceptionPage from '../pages/admin/protection/scenarios/EgressPrivateExceptionPage';
 import ContainerPage from '../pages/admin/protection/scenarios/ContainerPage';
 import PolicyPage from '../pages/admin/protection/scenarios/PolicyPage';
 import BreakerPage from '../pages/admin/protection/scenarios/BreakerPage';
@@ -56,6 +57,7 @@ import InstanceListPage from '../pages/instances/InstanceListPage';
 import CreateInstancePage from '../pages/instances/CreateInstancePage';
 import InstanceDetailPage from '../pages/instances/InstanceDetailPage';
 import InstancePortalPage from '../pages/instances/InstancePortalPage';
+import SharedInstancePage from '../pages/instances/SharedInstancePage';
 import TeamListPage from '../pages/teams/TeamListPage';
 import CreateTeamPage from '../pages/teams/CreateTeamPage';
 import TeamDetailPage from '../pages/teams/TeamDetailPage';
@@ -172,6 +174,7 @@ function AppRoutes() {
           </PublicRoute>
         }
       />
+      <Route path="/share/:code" element={<SharedInstancePage />} />
 
       {/* User Routes */}
       <Route
@@ -488,6 +491,7 @@ function AppRoutes() {
       <Route path="/admin/secplane/cat-comm" element={<AdminRoute><CategoryPage catId="cat-3" /></AdminRoute>} />
       <Route path="/admin/secplane/runtime/approval" element={<AdminRoute><ApprovalPage /></AdminRoute>} />
       <Route path="/admin/secplane/trust/outbound" element={<AdminRoute><OutboundPage /></AdminRoute>} />
+      <Route path="/admin/secplane/trust/egress-private" element={<AdminRoute><EgressPrivateExceptionPage /></AdminRoute>} />
       <Route path="/admin/secplane/govern/breaker" element={<AdminRoute><BreakerPage /></AdminRoute>} />
       <Route path="/admin/secplane/govern/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
       <Route path="/admin/secplane/isolate/container" element={<AdminRoute><ContainerPage /></AdminRoute>} />

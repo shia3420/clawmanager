@@ -437,6 +437,9 @@ func (r *runtimeAgentHandlerBindingRepo) UpdateRunning(ctx context.Context, inst
 	r.updateRunningCalls++
 	return nil
 }
+func (r *runtimeAgentHandlerBindingRepo) UpdateGatewayAssignment(ctx context.Context, instanceID int, generation int, gatewayID string, pid *int, state string, lastHealthAt *time.Time) error {
+	return nil
+}
 
 func (r *runtimeAgentHandlerBindingRepo) UpdateState(ctx context.Context, instanceID int, generation int, state string, message *string) error {
 	r.updateStateCalls++
@@ -479,6 +482,10 @@ func (r *runtimeAgentHandlerInstanceRepo) Create(instance *models.Instance) erro
 }
 
 func (r *runtimeAgentHandlerInstanceRepo) GetByID(id int) (*models.Instance, error) {
+	return nil, nil
+}
+
+func (r *runtimeAgentHandlerInstanceRepo) FindByPodIP(string) (*models.Instance, error) {
 	return nil, nil
 }
 

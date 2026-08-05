@@ -144,6 +144,43 @@ func (h *SkillHubHandler) PublishSkill(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Skill published to hub successfully", item)
 }
 
+func (h *SkillHubHandler) GetSkillMarkdown(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userRole, _ := c.Get("userRole")
+	skillID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "invalid skill ID")
+		return
+	}
+	content, err := h.service.GetSkillMarkdown(userID.(int), userRole.(string), skillID)
+	if err != nil {
+		utils.HandleHubError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "Skill markdown retrieved successfully", gin.H{"content": content})
+}
+
+func (h *SkillHubHandler) PublishSkillAsNew(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	userRole, _ := c.Get("userRole")
+	skillID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "invalid skill ID")
+		return
+	}
+	var req services.PublishSkillHubRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+	item, err := h.service.PublishSkillAsNew(userID.(int), userRole.(string), skillID, req.TagIDs)
+	if err != nil {
+		utils.HandleHubError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "Skill published as new hub skill successfully", item)
+}
+
 func (h *SkillHubHandler) UnpublishSkill(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	userRole, _ := c.Get("userRole")

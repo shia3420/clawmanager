@@ -73,6 +73,7 @@ func main() {
 	chatMessageRepo := repository.NewChatMessageRepository(database)
 	riskRuleRepo := repository.NewRiskRuleRepository(database)
 	riskHitRepo := repository.NewRiskHitRepository(database)
+	egressPrivateExceptionRepo := repository.NewEgressPrivateExceptionRepository(database)
 	openClawConfigRepo := repository.NewOpenClawConfigRepository(database)
 	instanceAgentRepo := repository.NewInstanceAgentRepository(database)
 	instanceRuntimeStatusRepo := repository.NewInstanceRuntimeStatusRepository(database)
@@ -109,6 +110,7 @@ func main() {
 	riskDetectionService := services.NewRiskDetectionService(riskRuleRepo)
 	riskHitService := services.NewRiskHitService(riskHitRepo)
 	riskRuleService := services.NewRiskRuleService(riskRuleRepo)
+	egressPrivateExceptionService := services.NewEgressPrivateExceptionService(egressPrivateExceptionRepo, instanceRepo, userRepo)
 	openClawConfigService := services.NewOpenClawConfigService(openClawConfigRepo, skillRepo)
 	objectStorageService, err := services.NewObjectStorageService(cfg.ObjectStorage)
 	if err != nil {
@@ -213,8 +215,27 @@ func main() {
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGatewayService)
 	aiObservabilityHandler := handlers.NewAIObservabilityHandler(aiObservabilityService)
 	riskRuleHandler := handlers.NewRiskRuleHandler(riskRuleService)
+	egressPrivateExceptionHandler := handlers.NewEgressPrivateExceptionHandler(egressPrivateExceptionService)
 	clusterResourceHandler := handlers.NewClusterResourceHandler(clusterResourceService)
-	egressProxyHandler := handlers.NewEgressProxyHandler(auditEventService)
+	teamPreviewSecretService := k8s.NewSecretService()
+	teamPreviewOrigin, _ := services.DefaultTeamPreviewOrigin()
+	egressProxyHandler := handlers.NewEgressProxyHandler(
+		auditEventService,
+		handlers.WithTeamArtifactPreview(
+			teamRepo,
+			teamPreviewSecretService,
+			cfg.Runtime.WorkspaceRoot,
+			func(userID int) string {
+				client := k8s.GetClient()
+				if client == nil {
+					return ""
+				}
+				return client.GetNamespace(userID)
+			},
+		),
+		handlers.WithTeamArtifactPreviewOrigin(teamPreviewOrigin),
+		handlers.WithEgressPrivateExceptions(egressPrivateExceptionService, instanceRepo),
+	)
 	openClawConfigHandler := handlers.NewOpenClawConfigHandler(openClawConfigService)
 	skillHandler := handlers.NewSkillHandler(skillService, instanceService)
 	skillHubHandler := handlers.NewSkillHubHandler(skillService, instanceService)
@@ -223,6 +244,7 @@ func main() {
 	teamHandler := handlers.NewTeamHandler(teamService)
 	workspaceFileHandler := handlers.NewWorkspaceFileHandler(instanceService, workspaceFileService, runtimeWorkspaceFileService)
 	workspaceFileHandler.SetSkillRepository(skillRepo)
+	workspaceFileHandler.SetExternalAccessServices(externalAccessService, instanceHandler.InstanceAccessService())
 	runtimeAgentHandler := handlers.NewRuntimeAgentHandler(cfg.Runtime, runtimePodRepo, bindingRepo, instanceRepo, runtimeEvents, skillService)
 	agentVariantTemplateHandler := handlers.NewVariantTemplateHandler(agentVariantTemplateService)
 
@@ -258,6 +280,7 @@ func main() {
 				services.WithRuntimeSchedulerGatewayPortRange(cfg.Runtime.GatewayPortStart, cfg.Runtime.GatewayPortEnd),
 				services.WithRuntimeSchedulerHeartbeatTimeout(cfg.Runtime.HeartbeatTimeout),
 				services.WithRuntimeSchedulerMaxGatewaysPerPod(cfg.Runtime.MaxGatewaysPerPod),
+				services.WithRuntimeSchedulerGatewayStartInFlightLimit(cfg.Runtime.GatewayStartInFlightLimit),
 			}
 			if gatewayEnvProvider, ok := instanceService.(interface {
 				BuildGatewayEnv(*models.Instance) (map[string]string, error)
@@ -347,6 +370,18 @@ func main() {
 
 	api := r.Group("/api/v1")
 	{
+		sharedInstances := api.Group("/shared-instances")
+		{
+			sharedInstances.GET("/:code/session", instanceHandler.GetSharedInstanceSession)
+			sharedInstances.GET("/:code/workspace/files", workspaceFileHandler.SharedList)
+			sharedInstances.GET("/:code/workspace/preview", workspaceFileHandler.SharedPreview)
+			sharedInstances.GET("/:code/workspace/download", workspaceFileHandler.SharedDownload)
+			sharedInstances.POST("/:code/workspace/upload", workspaceFileHandler.SharedUpload)
+			sharedInstances.POST("/:code/workspace/folders", workspaceFileHandler.SharedMkdir)
+			sharedInstances.PATCH("/:code/workspace/entries", workspaceFileHandler.SharedRename)
+			sharedInstances.DELETE("/:code/workspace/entries", workspaceFileHandler.SharedDelete)
+		}
+
 		runtimeAgent := api.Group("/runtime-agent")
 		{
 			runtimeAgent.POST("/register", runtimeAgentHandler.Register)
@@ -405,6 +440,7 @@ func main() {
 			instances.POST("/:id/start", instanceHandler.StartInstance)
 			instances.POST("/:id/stop", instanceHandler.StopInstance)
 			instances.POST("/:id/restart", instanceHandler.RestartInstance)
+			instances.GET("/:id/environment-overrides", instanceHandler.GetInstanceEnvironmentOverrides)
 			instances.GET("/:id/status", instanceHandler.GetInstanceStatus)
 			instances.GET("/:id/runtime", instanceHandler.GetRuntimeDetails)
 			instances.GET("/:id/session-usage", instanceHandler.GetInstanceSessionUsage)
@@ -438,6 +474,9 @@ func main() {
 			instances.POST("/:id/skills/:skillId/import-to-library", instanceHandler.ImportInstanceSkillToLibrary)
 			instances.POST("/:id/skills/:skillId/retry-package-collect", instanceHandler.RetrySkillPackageCollect)
 			instances.POST("/:id/skills/:skillId/publish-to-hub", instanceHandler.PublishInstanceSkillToHub)
+			instances.POST("/:id/skills/:skillId/restore", instanceHandler.RestoreInstanceSkill)
+			instances.POST("/:id/skills/:skillId/save-back-to-library", instanceHandler.SaveBackInstanceSkillToLibrary)
+			instances.POST("/:id/skills/:skillId/save-to-my-library", instanceHandler.SaveForeignInstanceSkillToMyLibrary)
 			instances.DELETE("/:id/skills/:skillId", skillHandler.RemoveSkillFromInstance)
 		}
 
@@ -545,12 +584,14 @@ func main() {
 			skillHub.POST("/skills/import", skillHubHandler.ImportSkills)
 			skillHub.GET("/skills/:id", skillHubHandler.GetSkill)
 			skillHub.POST("/skills/:id/publish", skillHubHandler.PublishSkill)
+			skillHub.POST("/skills/:id/publish-as-new", skillHubHandler.PublishSkillAsNew)
 			skillHub.POST("/skills/:id/unpublish", skillHubHandler.UnpublishSkill)
 			skillHub.PUT("/skills/:id/tags", skillHubHandler.UpdateTags)
 			skillHub.DELETE("/skills/:id", skillHubHandler.DeleteSkill)
 			skillHub.GET("/skills/:id/download", skillHubHandler.DownloadSkill)
 			skillHub.POST("/skills/:id/install", skillHubHandler.InstallSkill)
 			skillHub.POST("/skills/:id/install-batch", skillHubHandler.BatchInstallSkill)
+			skillHub.GET("/skills/:id/skill-md", skillHubHandler.GetSkillMarkdown)
 		}
 
 		adminSkillHub := api.Group("/admin/skill-hub")
@@ -638,6 +679,17 @@ func main() {
 			adminRiskRules.POST("/bulk-status", riskRuleHandler.BulkUpdateStatus)
 			adminRiskRules.PUT("", riskRuleHandler.UpsertRule)
 			adminRiskRules.DELETE("/:ruleId", riskRuleHandler.DeleteRule)
+		}
+
+		adminEgressPrivateExceptions := api.Group("/admin/egress-private-exceptions")
+		adminEgressPrivateExceptions.Use(middleware.Auth())
+		adminEgressPrivateExceptions.Use(middleware.SetUserInfo(userRepo))
+		adminEgressPrivateExceptions.Use(middleware.NewAdminAuth(userRepo))
+		{
+			adminEgressPrivateExceptions.GET("", egressPrivateExceptionHandler.ListExceptions)
+			adminEgressPrivateExceptions.POST("", egressPrivateExceptionHandler.CreateException)
+			adminEgressPrivateExceptions.PUT("/:id", egressPrivateExceptionHandler.UpdateException)
+			adminEgressPrivateExceptions.DELETE("/:id", egressPrivateExceptionHandler.DeleteException)
 		}
 
 		adminSkills := api.Group("/admin/skills")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrRuntimeAgentConflict = errors.New("runtime agent conflict")
 
 type RuntimeAgentClient interface {
 	Health(ctx context.Context, endpoint string) error
@@ -26,6 +29,10 @@ type RuntimeAgentPortRange struct {
 }
 
 type RuntimeAgentCreateGatewayRequest struct {
+	// GatewayPort is the exact primary port allocated by ClawManager. Runtime
+	// agents use PortRange only for backwards-compatible callers that have not
+	// yet been upgraded to control-plane port assignment.
+	GatewayPort   int                   `json:"gateway_port,omitempty"`
 	InstanceID    int                   `json:"instance_id"`
 	UserID        int                   `json:"user_id"`
 	AgentType     string                `json:"agent_type"`
@@ -133,7 +140,7 @@ func (c *runtimeAgentHTTPClient) do(ctx context.Context, method, endpoint, path 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if resp.StatusCode == http.StatusConflict {
-			return fmt.Errorf("runtime agent conflict: %s", string(msg))
+			return fmt.Errorf("%w: %s", ErrRuntimeAgentConflict, string(msg))
 		}
 		return fmt.Errorf("runtime agent status %d: %s", resp.StatusCode, string(msg))
 	}
